@@ -1,0 +1,36 @@
+[
+  {
+    "id": "TASK-101",
+    "title": "Add API health details endpoint",
+    "description": "Extend health check API to include system uptime and database status check.",
+    "acceptance_criteria": [
+      "GET /health/details returns status 200",
+      "Response payload contains status, uptime_seconds, and db_connected",
+      "All unit tests pass"
+    ],
+    "dependencies": [],
+    "max_attempts": 3,
+    "status": "pending",
+    "active_session_id": null,
+    "pr_number": null,
+    "pr_url": null,
+    "failure_history": []
+  },
+  {
+    "id": "TASK-102",
+    "title": "Add user authentication middleware",
+    "description": "Implement bearer token authentication middleware for protected API routes.",
+    "acceptance_criteria": [
+      "Requests without valid Authorization header return HTTP 401",
+      "Valid bearer token populates request context with user info",
+      "Unit and integration tests pass"
+    ],
+    "dependencies": ["TASK-101"],
+    "max_attempts": 3,
+    "status": "pending",
+    "active_session_id": null,
+    "pr_number": null,
+    "pr_url": null,
+    "failure_history": []
+  }
+]

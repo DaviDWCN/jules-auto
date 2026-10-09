@@ -1,0 +1,51 @@
+name: Jules Continuous Worker
+
+on:
+  schedule:
+    # Run every 15 minutes
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: jules-worker-orchestration
+  cancel-in-progress: false
+
+jobs:
+  run-worker:
+    name: Execute Jules Worker
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.AUTOMATION_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r automation/requirements.txt
+
+      - name: Run Jules Orchestrator Worker
+        env:
+          JULES_API_KEY: ${{ secrets.JULES_API_KEY }}
+          AUTOMATION_TOKEN: ${{ secrets.AUTOMATION_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python automation/worker.py
+
+      - name: Commit updated backlog state
+        run: |
+          git config user.name "jules-automation[bot]"
+          git config user.email "jules-automation[bot]@users.noreply.github.com"
+          git add automation/tasks.json
+          git diff --staged --quiet || git commit -m "chore(automation): update backlog task state [skip ci]"
+          # Attempt push to current branch; fallback to automation-state branch if main is protected
+          git push origin HEAD:${{ github.ref }} || git push origin HEAD:refs/heads/automation-state || echo "State saved in run context"
