@@ -2,5 +2,8 @@
   "project_name": "jules-auto",
   "project_context": "Python 3.10+ production API service. All unit tests must be written in the tests/ directory using pytest. Ensure all tests pass with zero warnings.",
   "default_max_attempts": 3,
-  "auto_merge": true
+  "auto_merge": true,
+  "enable_memory": true,
+  "max_memory_items": 20,
+  "inject_memory_count": 3
 }

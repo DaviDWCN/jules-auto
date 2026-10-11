@@ -197,6 +197,65 @@ class GitHubClient:
         return False
 
 
+# --- Memory & Self-Reflection Manager ---
+
+class MemoryManager:
+    """Manages persistent repository memory and post-mortem lessons learned."""
+
+    def __init__(self, memory_file: str = "automation/memory.json", max_items: int = 20):
+        self.memory_file = memory_file
+        self.max_items = max_items
+        self.memories: List[Dict[str, Any]] = []
+        self.load_memory()
+
+    def load_memory(self):
+        if self.memory_file and os.path.exists(self.memory_file):
+            try:
+                with open(self.memory_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.memories = data if isinstance(data, list) else []
+            except Exception as e:
+                print(f"[Warning] Failed to load memory from {self.memory_file}: {e}")
+                self.memories = []
+        else:
+            self.memories = []
+
+    def save_memory(self):
+        if self.memory_file:
+            os.makedirs(os.path.dirname(self.memory_file), exist_ok=True)
+            try:
+                with open(self.memory_file, "w", encoding="utf-8") as f:
+                    json.dump(self.memories, f, indent=2, ensure_ascii=False)
+            except Exception as e:
+                print(f"[Warning] Failed to save memory to {self.memory_file}: {e}")
+
+    def add_lesson(self, task_id: str, lesson: str, trigger_reason: str = ""):
+        """Adds a lesson learned, deduplicating and trimming to max_items."""
+        if not lesson or not lesson.strip():
+            return
+
+        clean_lesson = lesson.strip()
+        # Avoid duplicate lessons for the same task
+        for m in self.memories:
+            if m.get("task_id") == task_id and m.get("lesson") == clean_lesson:
+                return
+
+        entry = {
+            "task_id": task_id,
+            "lesson": clean_lesson,
+            "trigger_reason": trigger_reason.strip() if trigger_reason else "",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        self.memories.append(entry)
+        if len(self.memories) > self.max_items:
+            self.memories = self.memories[-self.max_items:]
+        self.save_memory()
+        print(f"[Memory Updated] Recorded new lesson from {task_id}: {clean_lesson}")
+
+    def get_recent_lessons(self, limit: int = 5) -> List[Dict[str, Any]]:
+        return self.memories[-limit:]
+
+
 # --- Task Manager Orchestrator ---
 
 class AutomationWorker:
@@ -206,17 +265,24 @@ class AutomationWorker:
         self,
         tasks_file: str = "automation/tasks.json",
         config_file: str = "automation/config.json",
+        memory_file: str = "automation/memory.json",
         jules_client: Optional[JulesClient] = None,
-        github_client: Optional[GitHubClient] = None
+        github_client: Optional[GitHubClient] = None,
+        memory_manager: Optional[MemoryManager] = None
     ):
         self.tasks_file = tasks_file
         self.config_file = config_file
+        self.memory_file = memory_file
         self.jules_client = jules_client or JulesClient()
         self.github_client = github_client or GitHubClient()
         self.tasks: List[Dict[str, Any]] = []
         self.config: Dict[str, Any] = {}
         self.load_config()
         self.load_tasks()
+        self.memory_manager = memory_manager or MemoryManager(
+            memory_file=self.memory_file,
+            max_items=self.config.get("max_memory_items", 20)
+        )
 
     def load_config(self):
         if os.path.exists(self.config_file):
@@ -311,6 +377,20 @@ class AutomationWorker:
                 str(project_context).strip(),
                 "====================================\n"
             ])
+
+        # Inject lessons learned from repository memory bank (Phase 1 Self-Improvement)
+        if self.config.get("enable_memory", True) and self.memory_manager:
+            inject_count = self.config.get("inject_memory_count", 3)
+            recent_lessons = self.memory_manager.get_recent_lessons(limit=inject_count)
+            if recent_lessons:
+                prompt_lines.extend([
+                    "=== Repository Lessons Learned (Avoid repeating past mistakes) ==="
+                ])
+                for m in recent_lessons:
+                    prompt_lines.append(f"- [{m.get('task_id')}]: {m.get('lesson')}")
+                prompt_lines.extend([
+                    "===================================================================\n"
+                ])
 
         prompt_lines.extend([
             f"Task ID: {task['id']}",
@@ -408,6 +488,50 @@ class AutomationWorker:
             print(f"[Task Blocked] Task {task['id']} exceeded max attempts ({limit}).")
             task["status"] = "blocked"
             task["blocked_reason"] = f"Exceeded max attempts ({limit}). Last reason: {reason}"
+            if self.config.get("enable_memory", True) and self.memory_manager:
+                self.memory_manager.add_lesson(
+                    task_id=task["id"],
+                    lesson=f"Avoid recurring pitfall: Task was blocked after repeated failures: {reason[:100]}.",
+                    trigger_reason=reason
+                )
+
+    def on_task_completed(self, task: Dict[str, Any]):
+        """
+        Phase 1 Self-Improvement:
+        Callback when a task transitions to 'done'. If the task previously experienced
+        failures before succeeding, synthesize a lesson learned and save to memory bank.
+        """
+        if not self.config.get("enable_memory", True) or not self.memory_manager:
+            return
+
+        failures = task.get("failure_history", [])
+        if failures:
+            lesson = self.synthesize_lesson_from_recovery(task)
+            if lesson:
+                last_reason = failures[-1].get("reason", "")
+                self.memory_manager.add_lesson(
+                    task_id=task["id"],
+                    lesson=lesson,
+                    trigger_reason=last_reason
+                )
+
+    def synthesize_lesson_from_recovery(self, task: Dict[str, Any]) -> str:
+        """
+        Synthesizes a concise takeaway from a resolved issue.
+        """
+        failures = task.get("failure_history", [])
+        if not failures:
+            return ""
+
+        last_reason = failures[-1].get("reason", "")
+        if "CI checks failed" in last_reason:
+            return f"Ensure all tests and assertions match expected schema before concluding PR (resolved after CI failure in {task['id']})."
+        elif "Review requested changes" in last_reason:
+            return f"Adhere strictly to project conventions and review feedback (resolved after review request in {task['id']})."
+        elif "closed without merging" in last_reason:
+            return f"Avoid closing PRs prematurely; ensure PR meets all merge criteria (resolved in {task['id']})."
+        else:
+            return f"Resolved prior issue: {last_reason[:100]} (fixed in {task['id']})."
 
     def check_pr_and_merge_gates(self, task: Dict[str, Any]):
         """
@@ -423,6 +547,7 @@ class AutomationWorker:
         if pr and pr.get("merged"):
             task["status"] = "done"
             print(f"[Task Done] PR #{pr_number} merged for Task {task['id']}")
+            self.on_task_completed(task)
             return
 
         if pr and pr.get("state") == "closed" and not pr.get("merged"):
@@ -495,7 +620,8 @@ class AutomationWorker:
 def main():
     tasks_file = os.getenv("TASKS_FILE", "automation/tasks.json")
     config_file = os.getenv("CONFIG_FILE", "automation/config.json")
-    worker = AutomationWorker(tasks_file=tasks_file, config_file=config_file)
+    memory_file = os.getenv("MEMORY_FILE", "automation/memory.json")
+    worker = AutomationWorker(tasks_file=tasks_file, config_file=config_file, memory_file=memory_file)
     worker.run_cycle()
 
 

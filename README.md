@@ -27,9 +27,13 @@
   - **精细化 CI 状态判定**：智能区分 `pending`、`failure` 与 `success`，避免在 CI 构建中被误判为失败；
   - **Review 门禁审查**：监听审查意见（`approved` / `changes_requested` / `pending`），遭遇修改请求时自动进入重试闭环；
   - **自动合入 (Auto-Merge)**：当 CI 与 Review 均通过时，自动调用 `gh pr merge --auto --squash` 发起合并请求，直至 PR 成功合入主分支。
+- **🧠 自我反思与经验记忆库 (Self-Reflection & Memory Bank - Phase 1)**：
+  - **事后复盘 (Post-Mortem Reflection)**：任务经历失败但最终修复合入后，系统自动反思并提炼一条经验教训（Lessons Learned），存入 `automation/memory.json`；
+  - **经验重放 (Experience Replay)**：后续所有新任务启动时，自动在 Prompt 顶部挂载最相关的过往避坑经验，让 Agent 在项目中实现**“吃一堑长一智，同类错误不犯第二次”**；
+  - **失败警示**：任务多次重试彻底阻塞时自动记录阻塞根因，防止后续任务重复踩坑。
 - **⏱️ GitHub Actions 定时轮询与状态自同步**：
   - 内置基于 GitHub Actions 的定时调度器（每 15 分钟触发或手动调度）；
-  - 执行完成后自动将更新后的任务状态（`automation/tasks.json`）落盘并提交回版本库。
+  - 执行完成后自动将更新后的任务状态（`automation/tasks.json`）与经验库（`automation/memory.json`）落盘并提交回版本库。
 
 ---
 
@@ -122,13 +126,19 @@ Worker 支持通过环境变量进行定制：
   "project_name": "jules-auto",
   "project_context": "Python 3.10+ production API service. All unit tests must be written in the tests/ directory using pytest. Ensure all tests pass with zero warnings.",
   "default_max_attempts": 3,
-  "auto_merge": true
+  "auto_merge": true,
+  "enable_memory": true,
+  "max_memory_items": 20,
+  "inject_memory_count": 3
 }
 ```
 
 - `project_context`: 项目架构与规范描述，会**自动注入到每一次发给 Jules 的 Prompt 顶部**，确保生成的代码风格与架构一致。
 - `default_max_attempts`: 单个任务最大重试次数（默认 3）。
 - `auto_merge`: CI 与 Review 通过后是否自动触发合并。
+- `enable_memory`: 是否开启经验记忆与事后复盘自反思机制（Phase 1）。
+- `max_memory_items`: 记忆库最大容量（保留最近的 N 条，默认 20）。
+- `inject_memory_count`: 每次派发新任务时，从记忆库注入到 Prompt 的最近经验条数（默认 3）。
 
 ---
 

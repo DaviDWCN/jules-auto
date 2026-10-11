@@ -176,3 +176,63 @@ def test_check_pr_merge_gates_merged_done(sample_tasks):
     worker.check_pr_and_merge_gates(task)
 
     assert task["status"] == "done"
+
+
+def test_memory_manager_lifecycle(tmp_path):
+    from automation.worker import MemoryManager
+    mem_file = tmp_path / "memory.json"
+    mgr = MemoryManager(memory_file=str(mem_file), max_items=2)
+
+    mgr.add_lesson("TASK-1", "Always mock external API in tests", trigger_reason="CI failed")
+    assert len(mgr.memories) == 1
+    assert mgr.memories[0]["task_id"] == "TASK-1"
+
+    # Test deduplication for exact same task and lesson
+    mgr.add_lesson("TASK-1", "Always mock external API in tests")
+    assert len(mgr.memories) == 1
+
+    # Test max_items limit
+    mgr.add_lesson("TASK-2", "Second lesson")
+    mgr.add_lesson("TASK-3", "Third lesson")
+    assert len(mgr.memories) == 2
+    assert mgr.memories[0]["task_id"] == "TASK-2"
+    assert mgr.memories[1]["task_id"] == "TASK-3"
+
+
+def test_prompt_injects_repository_memory(sample_tasks, tmp_path):
+    from automation.worker import MemoryManager
+    mem_file = tmp_path / "memory.json"
+    mgr = MemoryManager(memory_file=str(mem_file))
+    mgr.add_lesson("TASK-PREV", "Ensure fixture teardown runs to avoid deadlocks")
+
+    worker = AutomationWorker(tasks_file=sample_tasks, memory_manager=mgr)
+    prompt = worker.build_task_prompt(worker.tasks[0])
+
+    assert "Repository Lessons Learned" in prompt
+    assert "TASK-PREV" in prompt
+    assert "Ensure fixture teardown runs to avoid deadlocks" in prompt
+
+
+def test_task_merged_records_reflection_if_failures_occurred(sample_tasks, tmp_path):
+    from automation.worker import MemoryManager
+    mem_file = tmp_path / "memory.json"
+    mgr = MemoryManager(memory_file=str(mem_file))
+
+    mock_github = MagicMock()
+    mock_github.get_pr.return_value = {"merged": True, "state": "closed"}
+
+    worker = AutomationWorker(tasks_file=sample_tasks, github_client=mock_github, memory_manager=mgr)
+    task = worker.tasks[0]
+    task["pr_number"] = 42
+    task["failure_history"] = [
+        {"session_id": "sess-old", "reason": "CI checks failed on PR #42", "timestamp": "2026-10-11T00:00:00Z"}
+    ]
+
+    worker.check_pr_and_merge_gates(task)
+
+    assert task["status"] == "done"
+    # Should have recorded a lesson learned from the recovery!
+    assert len(mgr.memories) == 1
+    assert mgr.memories[0]["task_id"] == "TASK-1"
+    assert "resolved after CI failure" in mgr.memories[0]["lesson"]
+
