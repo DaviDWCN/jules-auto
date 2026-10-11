@@ -344,3 +344,47 @@ def test_worker_run_cycle_level2_and_level3_integration(sample_tasks, tmp_path):
     assert any(t["id"] == "TASK-AUTO-999" for t in worker.tasks)
 
 
+def test_session_timeout_watchdog(sample_tasks):
+    from datetime import datetime, timezone, timedelta
+
+    worker = AutomationWorker(tasks_file=sample_tasks)
+    worker.config["session_timeout_minutes"] = 30
+
+    task = worker.tasks[0]
+    task["status"] = "in_progress"
+    task["active_session_id"] = "sess-hang"
+    # Started 45 minutes ago (exceeds 30 mins)
+    past_time = datetime.now(timezone.utc) - timedelta(minutes=45)
+    task["session_started_at"] = past_time.isoformat()
+
+    worker.update_task_session_status(task)
+
+    # Active session should be aborted and recorded as failure
+    assert task["active_session_id"] is None
+    assert task["session_started_at"] is None
+    assert len(task["failure_history"]) == 1
+    assert "timed out" in task["failure_history"][0]["reason"]
+    assert task["status"] == "pending"  # Eligible for clean retry
+
+
+def test_architect_auditor_scan_untested_functions(tmp_path):
+    from automation.worker import ArchitectAuditor
+
+    src_dir = tmp_path / "src"
+    tests_dir = tmp_path / "tests"
+    src_dir.mkdir()
+    tests_dir.mkdir()
+
+    # Create module with two functions, test only covers func_a
+    (src_dir / "service.py").write_text("def func_a(): pass\ndef func_b(): pass\ndef _private_func(): pass")
+    (tests_dir / "test_service.py").write_text("def test_func_a(): func_a()")
+
+    auditor = ArchitectAuditor(src_dir=str(src_dir), tests_dir=str(tests_dir))
+    untested = auditor.scan_untested_functions()
+
+    assert len(untested) == 1
+    assert untested[0]["func_name"] == "func_b"
+    assert "service.py" in untested[0]["file"]
+
+
+

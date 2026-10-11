@@ -328,6 +328,78 @@ class ArchitectAuditor:
                         pass
         return todos
 
+    def scan_untested_functions(self) -> List[Dict[str, Any]]:
+        """
+        Uses AST analysis to detect public functions in src/ that are not referenced in tests/.
+        """
+        if not os.path.isdir(self.src_dir) or not os.path.isdir(self.tests_dir):
+            return []
+
+        import ast
+        untested_funcs = []
+
+        for root, _, files in os.walk(self.src_dir):
+            for file in files:
+                if file.endswith(".py") and file != "__init__.py":
+                    base_name = file[:-3]
+                    src_file_path = os.path.join(root, file)
+                    test_file_path = os.path.join(self.tests_dir, f"test_{base_name}.py")
+
+                    # If test file does not exist, scan_untested_modules handles it
+                    if not os.path.exists(test_file_path):
+                        continue
+
+                    try:
+                        with open(src_file_path, "r", encoding="utf-8") as f:
+                            tree = ast.parse(f.read(), filename=src_file_path)
+
+                        public_funcs = [
+                            node.name for node in tree.body
+                            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                            and not node.name.startswith("_")
+                        ]
+
+                        with open(test_file_path, "r", encoding="utf-8") as tf:
+                            test_content = tf.read()
+
+                        for func_name in public_funcs:
+                            if func_name not in test_content:
+                                try:
+                                    rel_path = os.path.relpath(src_file_path, start=".")
+                                except ValueError:
+                                    rel_path = os.path.relpath(src_file_path, start=self.src_dir)
+                                untested_funcs.append({
+                                    "file": rel_path,
+                                    "base_name": base_name,
+                                    "func_name": func_name
+                                })
+                    except Exception:
+                        pass
+
+        return untested_funcs
+
+    def scan_coverage_reports(self, coverage_file: str = "coverage.json", threshold_percent: float = 80.0) -> List[Dict[str, Any]]:
+        """Parses coverage.json if available from pytest-cov to find files with low coverage."""
+        if not os.path.exists(coverage_file):
+            return []
+
+        low_coverage = []
+        try:
+            with open(coverage_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            files = data.get("files", {})
+            for f_path, f_data in files.items():
+                summary = f_data.get("summary", {})
+                percent = summary.get("percent_covered", 100.0)
+                if percent < threshold_percent:
+                    low_coverage.append({
+                        "file": f_path,
+                        "percent": percent
+                    })
+        except Exception:
+            pass
+        return low_coverage
+
     def audit_and_expand_backlog(self, existing_tasks: List[Dict[str, Any]], auto_status: str = "pending") -> List[Dict[str, Any]]:
         """
         Synthesizes new backlog tasks based on code inspection.
@@ -390,7 +462,37 @@ class ArchitectAuditor:
             })
             allowed_slots -= 1
 
-        # 2. Inspect TODO comments
+        # 2. Inspect untested functions within existing modules (AST analysis)
+        if allowed_slots > 0:
+            untested_funcs = self.scan_untested_functions()
+            for uf in untested_funcs:
+                if allowed_slots <= 0:
+                    break
+                if uf["func_name"] in existing_descriptions:
+                    continue
+
+                task_id = next_auto_id()
+                new_tasks.append({
+                    "id": task_id,
+                    "title": f"为 {uf['file']} 的 {uf['func_name']} 函数补全单测",
+                    "description": f"AST 语法树巡检发现 {uf['file']} 中的公开函数 `{uf['func_name']}` 在现有测试用例中缺少引用与断言。请在 tests/test_{uf['base_name']}.py 中补充针对该函数的独立测试。",
+                    "acceptance_criteria": [
+                        f"在 tests/test_{uf['base_name']}.py 中编写 test_{uf['func_name']} 测试用例",
+                        f"断言覆盖 `{uf['func_name']}` 的正常返回值与异常输入",
+                        "pytest 全部通过"
+                    ],
+                    "dependencies": dep_id,
+                    "max_attempts": 3,
+                    "status": auto_status,
+                    "active_session_id": None,
+                    "pr_number": None,
+                    "pr_url": None,
+                    "failure_history": [],
+                    "is_auto_generated": True
+                })
+                allowed_slots -= 1
+
+        # 3. Inspect TODO comments
         if allowed_slots > 0:
             todos = self.scan_todos()
             for td in todos:
@@ -683,6 +785,7 @@ class AutomationWorker:
             session = self.jules_client.create_session(prompt=prompt, title=title, repository=repo)
             session_id = session.get("id") or session.get("sessionId") or session.get("name")
             task["active_session_id"] = session_id
+            task["session_started_at"] = datetime.now(timezone.utc).isoformat()
             task["status"] = "in_progress"
             print(f"[Started] Created session {session_id} for Task {task['id']}")
         except Exception as e:
@@ -693,6 +796,21 @@ class AutomationWorker:
         session_id = task.get("active_session_id")
         if not session_id:
             return
+
+        # Session Timeout Watchdog
+        timeout_minutes = self.config.get("session_timeout_minutes", 60)
+        started_at_str = task.get("session_started_at")
+        if started_at_str and timeout_minutes > 0:
+            try:
+                started_dt = datetime.fromisoformat(started_at_str)
+                now_dt = datetime.now(timezone.utc)
+                elapsed_minutes = (now_dt - started_dt).total_seconds() / 60.0
+                if elapsed_minutes >= timeout_minutes:
+                    print(f"[Watchdog Timeout] Session {session_id} for task {task['id']} exceeded {timeout_minutes}m (elapsed: {elapsed_minutes:.1f}m). Terminating session wait.")
+                    self.record_task_failure(task, session_id, f"Session timed out after {elapsed_minutes:.1f} minutes without completion.")
+                    return
+            except Exception as e:
+                print(f"[Warning] Failed to calculate session timeout: {e}")
 
         try:
             session = self.jules_client.get_session(session_id)
@@ -735,8 +853,9 @@ class AutomationWorker:
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
 
-        # Clear active session pointer
+        # Clear active session pointer & started timestamp
         task["active_session_id"] = None
+        task["session_started_at"] = None
 
         limit = task.get("max_attempts") or self.config.get("default_max_attempts", 3)
         if len(failures) < limit:
@@ -759,6 +878,7 @@ class AutomationWorker:
         Callback when a task transitions to 'done'. If the task previously experienced
         failures before succeeding, synthesize a lesson learned and save to memory bank.
         """
+        task["session_started_at"] = None
         if not self.config.get("enable_memory", True) or not self.memory_manager:
             return
 

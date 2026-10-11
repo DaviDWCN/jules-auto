@@ -3,6 +3,7 @@
   "project_context": "Production-grade project. Write clean, modular, and maintainable code. Implement corresponding unit tests in tests/ using pytest. Ensure all tests pass.",
   "default_max_attempts": 3,
   "auto_merge": true,
+  "session_timeout_minutes": 60,
   "enable_memory": true,
   "max_memory_items": 20,
   "inject_memory_count": 3,
