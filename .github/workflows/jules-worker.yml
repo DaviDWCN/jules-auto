@@ -10,6 +10,12 @@ concurrency:
   group: jules-worker-orchestration
   cancel-in-progress: false
 
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  statuses: read
+
 jobs:
   run-worker:
     name: Execute Jules Worker
@@ -19,7 +25,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.AUTOMATION_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.AUTOMATION_TOKEN || github.token }}
           fetch-depth: 0
 
       - name: Set up Python
@@ -36,7 +42,8 @@ jobs:
         env:
           JULES_API_KEY: ${{ secrets.JULES_API_KEY }}
           AUTOMATION_TOKEN: ${{ secrets.AUTOMATION_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.AUTOMATION_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.AUTOMATION_TOKEN || github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           python automation/worker.py

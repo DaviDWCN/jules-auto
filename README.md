@@ -75,38 +75,60 @@ jules-auto/
 ├── .github/
 │   └── workflows/
 │       ├── api-ci.yml             # API 基础 CI：运行 pytest 测试与语法检查
-│       └── jules-worker.yml       # 定时/手动触发 Jules Worker 调度工作流
+│       └── jules-worker.yml       # 定时/手动触发 Jules Worker 调度工作流 (零 PAT 配置)
 ├── automation/
+│   ├── config.json                # 项目全局配置 (项目名称、技术栈上下文、Auto-merge 开关)
 │   ├── requirements.txt           # 调度器运行依赖 (requests)
 │   ├── tasks.json                 # 任务待办与执行状态持久化存储
 │   └── worker.py                  # 核心调度器 (JulesClient, GitHubClient, AutomationWorker)
-├── src/
-│   ├── __init__.py
-│   └── app.py                     # 示例目标 API 服务 (提供基础健康检查与版本接口)
-├── tests/
-│   ├── __init__.py
-│   ├── test_app.py                # 示例 API 测试用例
-│   └── test_worker.py             # 核心调度器全量单元测试 (涵盖三条鲁棒性规则)
+├── jules_auto_template/           # 🌟 极简开箱模板目录 (可直接复制到任意新仓库)
+│   ├── .github/workflows/         # 新项目即用的 CI 与 Worker 工作流
+│   ├── automation/                # 预置 config.json 与 tasks.json
+│   ├── src/ & tests/              # 初始代码与测试套件
+│   ├── QUICKSTART.md              # 3 步极速使用指南
+│   └── pyproject.toml             # 包管理配置
+├── src/                           # 业务源码目录
+├── tests/                         # 测试用例目录
+├── init_project.py                # 🛠️ 一键初始化新项目的自动化脚本
 ├── pyproject.toml                 # 项目元数据与 pytest 配置
 └── README.md                      # 项目说明文档
 ```
 
 ---
 
-## ⚙️ 环境变量与配置
+## ⚙️ 环境变量与配置（极简配置：仅需 1 个 Secret）
 
 Worker 支持通过环境变量进行定制：
 
 | 环境变量 | 必填 | 默认值 | 说明 |
 | :--- | :---: | :--- | :--- |
-| `JULES_API_KEY` | 是 | 无 | Google Jules REST API Key（请求头 `x-goog-api-key`） |
+| `JULES_API_KEY` | **是 (唯一必需)** | 无 | Google Jules REST API Key（在 GitHub Secrets 中配置） |
 | `JULES_API_URL` | 否 | `https://jules.googleapis.com` | Jules API Base URL |
-| `AUTOMATION_TOKEN` | 是* | 无 | 具备 PR 与 Checks 操作权限的 GitHub Personal Access Token (PAT) |
-| `GITHUB_TOKEN` | 否 | 无 | GitHub Actions 默认提供的 Token（若未配置 `AUTOMATION_TOKEN` 则降级使用） |
-| `GITHUB_REPOSITORY` | 否 | 无 | 目标仓库，格式为 `owner/repo`（在 GitHub Actions 中自动注入） |
+| `AUTOMATION_TOKEN` | 否 (可选) | 无 | 可选的 GitHub PAT。**未配置时系统自动使用 GitHub 自带的 `github.token`**，完全无需手动生成 PAT |
+| `GITHUB_REPOSITORY` | 否 | 无 | 目标仓库，格式为 `owner/repo`（GitHub Actions 自动注入） |
 | `TASKS_FILE` | 否 | `automation/tasks.json` | 任务列表 JSON 存储文件路径 |
+| `CONFIG_FILE` | 否 | `automation/config.json` | 项目全局配置文件路径 |
 
-> **提示**：若要在 PR 中触发 GitHub Actions CI 以及使用 Auto-merge，建议配置具备 `repo` 与 `workflow` 权限的 `AUTOMATION_TOKEN` 作为 Secret。
+> 💡 **极简权限设计**：工作流已内嵌 GitHub 精细化权限（`contents: write`, `pull-requests: write`），并在 Auto-merge 中打通了 `GH_TOKEN` 与 GraphQL 兜底。你**完全不需要**创建或管理个人的 GitHub Personal Access Token！
+
+---
+
+## 🔧 项目全局配置 (`automation/config.json`)
+
+通过 `automation/config.json` 可全局约束 Jules 的开发行为与技术栈规范：
+
+```json
+{
+  "project_name": "jules-auto",
+  "project_context": "Python 3.10+ production API service. All unit tests must be written in the tests/ directory using pytest. Ensure all tests pass with zero warnings.",
+  "default_max_attempts": 3,
+  "auto_merge": true
+}
+```
+
+- `project_context`: 项目架构与规范描述，会**自动注入到每一次发给 Jules 的 Prompt 顶部**，确保生成的代码风格与架构一致。
+- `default_max_attempts`: 单个任务最大重试次数（默认 3）。
+- `auto_merge`: CI 与 Review 通过后是否自动触发合并。
 
 ---
 
@@ -228,3 +250,27 @@ python automation/worker.py
 1. **避免会话分裂与重复扣费**：每次调度启动前执行 `reconcile_sessions()`，避免机器断电或超时重启导致同一个任务多次触发扣费会话。
 2. **上下文迭代闭环**：当 Jules 提交的代码未能通过 CI（例如语法错误或单测不通过）时，报错信息会被注入下一次的 Prompt 中，让大模型能像真实开发者一样根据错误日志进行 Debug。
 3. **安全合入策略**：严格等待 GitHub Check Runs 全部为成功状态，且 Review 未被标记为 Changes Requested，方才启用 Squash 自动合并。
+
+---
+
+## 📦 开箱即用新项目：`jules_auto_template`
+
+如果你想要新建一个属于自己的全新项目仓库，并让 Jules 从第一天开始自动化辅助开发，推荐直接使用内置的模板方案：
+
+### 方式 1：使用一键初始化脚本（推荐）
+在当前仓库根目录下运行：
+```bash
+python init_project.py --target-dir ../my-new-project --name "my-awesome-app" --context "FastAPI 后端架构，使用 pytest 测试"
+```
+脚本会自动把干净的模板克隆至新目录，并替你配置好项目名称与技术栈提示。
+
+### 方式 2：直接复制 `jules_auto_template/` 目录
+直接将项目中的 `jules_auto_template/` 文件夹内容复制到任何新的 Git 仓库中。
+
+### 新仓库极简配置（仅需 1 个 Secret）
+1. 在新仓库 `Settings -> Secrets and variables -> Actions` 中添加 **`JULES_API_KEY`**；
+2. 勾选两项仓库设置：
+   - `Settings -> General` $\rightarrow$ 勾选 **Allow auto-merge**；
+   - `Settings -> Actions -> General` $\rightarrow$ Workflow permissions 选择 **Read and write permissions** 并勾选 **Allow GitHub Actions to create and approve pull requests**。
+3. 在 `automation/config.json` 和 `automation/tasks.json` 中写下你的需求即可！
+详细指引请查阅 [jules_auto_template/QUICKSTART.md](jules_auto_template/QUICKSTART.md)。

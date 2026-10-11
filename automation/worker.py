@@ -68,7 +68,7 @@ class GitHubClient:
     """Helper for GitHub API and CLI interactions."""
 
     def __init__(self, token: Optional[str] = None, repository: Optional[str] = None):
-        self.token = token or os.getenv("AUTOMATION_TOKEN") or os.getenv("GITHUB_TOKEN", "")
+        self.token = token or os.getenv("AUTOMATION_TOKEN") or os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN", "")
         self.repository = repository or os.getenv("GITHUB_REPOSITORY", "")
 
     def _get_headers(self) -> Dict[str, str]:
@@ -149,18 +149,51 @@ class GitHubClient:
         return "pending"
 
     def enable_auto_merge(self, pr_number: int) -> bool:
-        """Attempts to enable auto-merge on a PR via gh CLI or API."""
-        if self.repository:
+        """Attempts to enable auto-merge on a PR via gh CLI or GitHub GraphQL API."""
+        if not self.repository:
+            return False
+
+        # Attempt 1: gh CLI with injected token environment
+        try:
+            cmd = [
+                "gh", "pr", "merge", str(pr_number),
+                "--repo", self.repository,
+                "--auto", "--squash"
+            ]
+            env = os.environ.copy()
+            if self.token:
+                env["GH_TOKEN"] = self.token
+                env["GITHUB_TOKEN"] = self.token
+            res = subprocess.run(cmd, capture_output=True, text=True, env=env)
+            if res.returncode == 0:
+                return True
+        except Exception:
+            pass
+
+        # Attempt 2: GraphQL API fallback if gh CLI failed
+        if self.token:
             try:
-                cmd = [
-                    "gh", "pr", "merge", str(pr_number),
-                    "--repo", self.repository,
-                    "--auto", "--squash"
-                ]
-                res = subprocess.run(cmd, capture_output=True, text=True)
-                return res.returncode == 0
+                pr = self.get_pr(pr_number)
+                node_id = pr.get("node_id") if pr else None
+                if node_id:
+                    mutation = """
+                    mutation($prId: ID!) {
+                        enablePullRequestAutoMerge(input: {pullRequestId: $prId, mergeMethod: SQUASH}) {
+                            pullRequest { id }
+                        }
+                    }
+                    """
+                    resp = requests.post(
+                        "https://api.github.com/graphql",
+                        headers=self._get_headers(),
+                        json={"query": mutation, "variables": {"prId": node_id}},
+                        timeout=30
+                    )
+                    if resp.status_code == 200 and "errors" not in resp.json():
+                        return True
             except Exception:
                 pass
+
         return False
 
 
@@ -169,12 +202,32 @@ class GitHubClient:
 class AutomationWorker:
     """Task orchestrator implementing state reconciliation and merge gates."""
 
-    def __init__(self, tasks_file: str = "automation/tasks.json", jules_client: Optional[JulesClient] = None, github_client: Optional[GitHubClient] = None):
+    def __init__(
+        self,
+        tasks_file: str = "automation/tasks.json",
+        config_file: str = "automation/config.json",
+        jules_client: Optional[JulesClient] = None,
+        github_client: Optional[GitHubClient] = None
+    ):
         self.tasks_file = tasks_file
+        self.config_file = config_file
         self.jules_client = jules_client or JulesClient()
         self.github_client = github_client or GitHubClient()
         self.tasks: List[Dict[str, Any]] = []
+        self.config: Dict[str, Any] = {}
+        self.load_config()
         self.load_tasks()
+
+    def load_config(self):
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, "r", encoding="utf-8") as f:
+                    self.config = json.load(f)
+            except Exception as e:
+                print(f"[Warning] Failed to load config from {self.config_file}: {e}")
+                self.config = {}
+        else:
+            self.config = {}
 
     def load_tasks(self):
         if os.path.exists(self.tasks_file):
@@ -248,12 +301,23 @@ class AutomationWorker:
         return True
 
     def build_task_prompt(self, task: Dict[str, Any]) -> str:
-        prompt_lines = [
+        prompt_lines = []
+
+        # Inject project context/guidelines from config if present
+        project_context = self.config.get("project_context") or self.config.get("context")
+        if project_context:
+            prompt_lines.extend([
+                "=== Project Context & Guidelines ===",
+                str(project_context).strip(),
+                "====================================\n"
+            ])
+
+        prompt_lines.extend([
             f"Task ID: {task['id']}",
             f"Title: {task['title']}",
             f"Description: {task['description']}",
             "Acceptance Criteria:",
-        ]
+        ])
         for ac in task.get("acceptance_criteria", []):
             prompt_lines.append(f"- {ac}")
 
@@ -336,13 +400,14 @@ class AutomationWorker:
         # Clear active session pointer
         task["active_session_id"] = None
 
-        if len(failures) < task.get("max_attempts", 3):
-            print(f"[Retry Scheduled] Task {task['id']} attempt {len(failures)} failed. Retrying (Max: {task.get('max_attempts')}).")
+        limit = task.get("max_attempts") or self.config.get("default_max_attempts", 3)
+        if len(failures) < limit:
+            print(f"[Retry Scheduled] Task {task['id']} attempt {len(failures)} failed. Retrying (Max: {limit}).")
             task["status"] = "pending"
         else:
-            print(f"[Task Blocked] Task {task['id']} exceeded max attempts ({task.get('max_attempts')}).")
+            print(f"[Task Blocked] Task {task['id']} exceeded max attempts ({limit}).")
             task["status"] = "blocked"
-            task["blocked_reason"] = f"Exceeded max attempts ({task.get('max_attempts')}). Last reason: {reason}"
+            task["blocked_reason"] = f"Exceeded max attempts ({limit}). Last reason: {reason}"
 
     def check_pr_and_merge_gates(self, task: Dict[str, Any]):
         """
@@ -390,9 +455,10 @@ class AutomationWorker:
             self.record_task_failure(task, task.get("active_session_id"), f"Review requested changes on PR #{pr_number}")
             return
 
-        # Request Auto-merge if not already requested
-        print(f"[Requesting Auto-Merge] Task {task['id']} PR #{pr_number} passing all merge gates.")
-        self.github_client.enable_auto_merge(pr_number)
+        # Request Auto-merge if enabled in config
+        if self.config.get("auto_merge", True):
+            print(f"[Requesting Auto-Merge] Task {task['id']} PR #{pr_number} passing all merge gates.")
+            self.github_client.enable_auto_merge(pr_number)
         task["status"] = "waiting_for_review"  # Polling continues until GitHub reports MERGED
 
     def run_cycle(self):
@@ -428,7 +494,8 @@ class AutomationWorker:
 
 def main():
     tasks_file = os.getenv("TASKS_FILE", "automation/tasks.json")
-    worker = AutomationWorker(tasks_file=tasks_file)
+    config_file = os.getenv("CONFIG_FILE", "automation/config.json")
+    worker = AutomationWorker(tasks_file=tasks_file, config_file=config_file)
     worker.run_cycle()
 
 

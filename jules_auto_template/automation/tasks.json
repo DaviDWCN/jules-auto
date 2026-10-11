@@ -1,0 +1,36 @@
+[
+  {
+    "id": "TASK-001",
+    "title": "初始化系统基础状态与核心信息接口",
+    "description": "在 src/app.py 中扩展基础服务信息，提供应用名称、运行环境、系统运行时间及版本信息。",
+    "acceptance_criteria": [
+      "GET /info 返回字典格式，包含 name, version, status",
+      "在 tests/ 编写并完善对应的单元测试",
+      "执行 pytest 全部通过无报错"
+    ],
+    "dependencies": [],
+    "max_attempts": 3,
+    "status": "pending",
+    "active_session_id": null,
+    "pr_number": null,
+    "pr_url": null,
+    "failure_history": []
+  },
+  {
+    "id": "TASK-002",
+    "title": "实现基础数据校验与配置加载器",
+    "description": "实现应用配置加载模块，支持从环境变量或配置文件读取参数并提供安全默认值。",
+    "acceptance_criteria": [
+      "实现配置类或读取函数，具备类型转换与默认值回退能力",
+      "编写单元测试覆盖默认配置与自定义环境变量输入场景",
+      "pytest 测试全部通过"
+    ],
+    "dependencies": ["TASK-001"],
+    "max_attempts": 3,
+    "status": "pending",
+    "active_session_id": null,
+    "pr_number": null,
+    "pr_url": null,
+    "failure_history": []
+  }
+]
