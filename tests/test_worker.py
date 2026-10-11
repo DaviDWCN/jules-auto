@@ -236,3 +236,111 @@ def test_task_merged_records_reflection_if_failures_occurred(sample_tasks, tmp_p
     assert mgr.memories[0]["task_id"] == "TASK-1"
     assert "resolved after CI failure" in mgr.memories[0]["lesson"]
 
+
+def test_architect_auditor_backlog_synthesis(tmp_path):
+    from automation.worker import ArchitectAuditor
+
+    src_dir = tmp_path / "src"
+    tests_dir = tmp_path / "tests"
+    src_dir.mkdir()
+    tests_dir.mkdir()
+
+    # Create one tested module and one untested module with a TODO
+    (src_dir / "auth.py").write_text("# auth logic\n# TODO: add rate limiting\ndef login(): pass")
+    (src_dir / "payment.py").write_text("# payment logic\ndef pay(): pass")
+    (tests_dir / "test_auth.py").write_text("def test_login(): pass")
+
+    auditor = ArchitectAuditor(src_dir=str(src_dir), tests_dir=str(tests_dir), max_auto_tasks=2)
+
+    untested = auditor.scan_untested_modules()
+    assert any("payment.py" in f for f in untested)
+    assert not any("auth.py" in f for f in untested)
+
+    todos = auditor.scan_todos()
+    assert len(todos) >= 1
+    assert "rate limiting" in todos[0]["comment"]
+
+    existing_tasks = [
+        {"id": "TASK-1", "title": "Initial task", "status": "done", "description": "done"}
+    ]
+    new_tasks = auditor.audit_and_expand_backlog(existing_tasks=existing_tasks)
+
+    assert len(new_tasks) == 2
+    assert any("payment" in t["title"] for t in new_tasks)
+    assert any("rate limiting" in t["title"] for t in new_tasks)
+    assert all(t["dependencies"] == ["TASK-1"] for t in new_tasks)
+
+
+def test_guideline_optimizer_recurrence(tmp_path):
+    from automation.worker import GuidelineOptimizer
+
+    config_file = tmp_path / "config.json"
+    initial_config = {
+        "project_name": "test",
+        "project_context": "Base guidelines."
+    }
+    config_file.write_text(json.dumps(initial_config), encoding="utf-8")
+
+    optimizer = GuidelineOptimizer(retry_threshold=2)
+
+    tasks = [
+        {
+            "id": "T1",
+            "failure_history": [
+                {"reason": "Failed because mock was not used on network call"},
+                {"reason": "Assertion error in API response payload"}
+            ]
+        },
+        {
+            "id": "T2",
+            "failure_history": [
+                {"reason": "Failed again, network timeout without mock"}
+            ]
+        }
+    ]
+
+    updated = optimizer.optimize_guidelines_if_needed(tasks=tasks, config=initial_config, config_file=str(config_file))
+
+    assert updated is True
+    assert "mock" in initial_config["project_context"]
+
+    # Re-reading saved config from disk with utf-8 encoding
+    saved_data = json.loads(config_file.read_text(encoding="utf-8"))
+    assert "mock" in saved_data["project_context"]
+
+
+def test_worker_run_cycle_level2_and_level3_integration(sample_tasks, tmp_path):
+    mock_auditor = MagicMock()
+    mock_auditor.audit_and_expand_backlog.return_value = [
+        {
+            "id": "TASK-AUTO-999",
+            "title": "Synthesized task",
+            "description": "Auto",
+            "acceptance_criteria": ["ac"],
+            "dependencies": [],
+            "max_attempts": 3,
+            "status": "pending",
+            "active_session_id": None,
+            "pr_number": None,
+            "pr_url": None,
+            "failure_history": []
+        }
+    ]
+
+    mock_optimizer = MagicMock()
+
+    worker = AutomationWorker(
+        tasks_file=sample_tasks,
+        architect_auditor=mock_auditor,
+        guideline_optimizer=mock_optimizer
+    )
+    worker.config["enable_backlog_expansion"] = True
+    worker.config["enable_guideline_optimization"] = True
+
+    worker.run_cycle()
+
+    mock_optimizer.optimize_guidelines_if_needed.assert_called_once()
+    mock_auditor.audit_and_expand_backlog.assert_called_once()
+    assert any(t["id"] == "TASK-AUTO-999" for t in worker.tasks)
+
+

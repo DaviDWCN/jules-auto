@@ -256,6 +256,254 @@ class MemoryManager:
         return self.memories[-limit:]
 
 
+# --- Level 2: Code Quality Auditor & Backlog Synthesizer ---
+
+class ArchitectAuditor:
+    """
+    Architect / Auditor Agent:
+    Inspects repository codebase for test coverage gaps, TODOs, and code health,
+    autonomously synthesizing new tasks for tasks.json with safety guardrails.
+    """
+
+    def __init__(self, src_dir: str = "src", tests_dir: str = "tests", max_auto_tasks: int = 2):
+        self.src_dir = src_dir
+        self.tests_dir = tests_dir
+        self.max_auto_tasks = max_auto_tasks
+
+    def scan_untested_modules(self) -> List[str]:
+        """Finds python modules in src/ that have no corresponding test file in tests/."""
+        if not os.path.isdir(self.src_dir):
+            return []
+
+        untested = []
+        for root, _, files in os.walk(self.src_dir):
+            for file in files:
+                if file.endswith(".py") and file != "__init__.py":
+                    base_name = file[:-3]
+                    expected_test = f"test_{base_name}.py"
+                    # Check if test file exists in tests/
+                    test_found = False
+                    if os.path.isdir(self.tests_dir):
+                        for _, _, t_files in os.walk(self.tests_dir):
+                            if expected_test in t_files:
+                                test_found = True
+                                break
+                    if not test_found:
+                        full_path = os.path.join(root, file)
+                        try:
+                            rel_path = os.path.relpath(full_path, start=".")
+                        except ValueError:
+                            rel_path = os.path.relpath(full_path, start=self.src_dir)
+                        untested.append(rel_path)
+        return untested
+
+    def scan_todos(self) -> List[Dict[str, Any]]:
+        """Scans source files for TODO and FIXME annotations."""
+        if not os.path.isdir(self.src_dir):
+            return []
+
+        todos = []
+        for root, _, files in os.walk(self.src_dir):
+            for file in files:
+                if file.endswith(".py"):
+                    file_path = os.path.join(root, file)
+                    try:
+                        rel_path = os.path.relpath(file_path, start=".")
+                    except ValueError:
+                        rel_path = os.path.relpath(file_path, start=self.src_dir)
+                    try:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            for idx, line in enumerate(f, 1):
+                                if "TODO:" in line or "FIXME:" in line:
+                                    tag = "TODO" if "TODO:" in line else "FIXME"
+                                    content = line.split(f"{tag}:", 1)[1].strip()
+                                    if content:
+                                        todos.append({
+                                            "file": rel_path,
+                                            "line": idx,
+                                            "tag": tag,
+                                            "comment": content
+                                        })
+                    except Exception:
+                        pass
+        return todos
+
+    def audit_and_expand_backlog(self, existing_tasks: List[Dict[str, Any]], auto_status: str = "pending") -> List[Dict[str, Any]]:
+        """
+        Synthesizes new backlog tasks based on code inspection.
+        Enforces deduplication, dependencies, and max_auto_tasks guardrails.
+        """
+        active_auto_tasks = [
+            t for t in existing_tasks
+            if t.get("id", "").startswith("TASK-AUTO-") and t.get("status") in ["pending", "in_progress", "waiting_for_ci", "waiting_for_review"]
+        ]
+        if len(active_auto_tasks) >= self.max_auto_tasks:
+            return []
+
+        allowed_slots = self.max_auto_tasks - len(active_auto_tasks)
+        new_tasks = []
+
+        existing_descriptions = " ".join([
+            f"{t.get('title', '')} {t.get('description', '')}" for t in existing_tasks
+        ])
+
+        # Anchor dependency to latest completed task if available
+        done_task_ids = [t["id"] for t in existing_tasks if t.get("status") == "done"]
+        dep_id = [done_task_ids[-1]] if done_task_ids else []
+
+        existing_ids = [t["id"] for t in existing_tasks]
+        def next_auto_id():
+            idx = 101
+            while f"TASK-AUTO-{idx}" in existing_ids:
+                idx += 1
+            generated_id = f"TASK-AUTO-{idx}"
+            existing_ids.append(generated_id)
+            return generated_id
+
+        # 1. Inspect untested modules
+        untested_files = self.scan_untested_modules()
+        for u_file in untested_files:
+            if allowed_slots <= 0:
+                break
+            if u_file in existing_descriptions:
+                continue
+
+            base = os.path.basename(u_file)
+            task_id = next_auto_id()
+            new_tasks.append({
+                "id": task_id,
+                "title": f"补全 {base} 模块单元测试与覆盖率",
+                "description": f"代码质量巡检发现 {u_file} 缺少自动化测试用例文件。请在 tests/ 目录下创建对应测试，覆盖核心函数与异常分支。",
+                "acceptance_criteria": [
+                    f"在 tests/ 目录下新建 test_{base} 并覆盖 {base} 的公开函数",
+                    "测试包含正常输入与边界异常断言",
+                    "pytest 全部通过"
+                ],
+                "dependencies": dep_id,
+                "max_attempts": 3,
+                "status": auto_status,
+                "active_session_id": None,
+                "pr_number": None,
+                "pr_url": None,
+                "failure_history": [],
+                "is_auto_generated": True
+            })
+            allowed_slots -= 1
+
+        # 2. Inspect TODO comments
+        if allowed_slots > 0:
+            todos = self.scan_todos()
+            for td in todos:
+                if allowed_slots <= 0:
+                    break
+                if td["comment"] in existing_descriptions:
+                    continue
+
+                task_id = next_auto_id()
+                new_tasks.append({
+                    "id": task_id,
+                    "title": f"实现 {os.path.basename(td['file'])} 待办: {td['comment'][:30]}",
+                    "description": f"代码审计在 {td['file']} 第 {td['line']} 行发现待办事项: {td['comment']}。请实现该功能并移除该 TODO 注释。",
+                    "acceptance_criteria": [
+                        f"完成 {td['file']} 中的待办需求: {td['comment']}",
+                        "编写或补充对应单元测试",
+                        "pytest 全部通过"
+                    ],
+                    "dependencies": dep_id,
+                    "max_attempts": 3,
+                    "status": auto_status,
+                    "active_session_id": None,
+                    "pr_number": None,
+                    "pr_url": None,
+                    "failure_history": [],
+                    "is_auto_generated": True
+                })
+                allowed_slots -= 1
+
+        if new_tasks:
+            print(f"[Architect Agent] Synthesized {len(new_tasks)} new task(s) from code inspection: {[t['id'] for t in new_tasks]}")
+        return new_tasks
+
+
+# --- Level 3: Global Guideline Self-Optimizer ---
+
+class GuidelineOptimizer:
+    """
+    Self-Refining Guidelines Agent:
+    Monitors retry failure patterns across multiple tasks, extracts recurring failure modes,
+    and autonomously optimizes config.json's project_context guidelines.
+    """
+
+    HEURISTIC_RULES = [
+        {
+            "keyword": "syntax",
+            "rule": "严格遵守 Python 语法与模块导入规范，确保所有新增文件无语法解析错误。",
+        },
+        {
+            "keyword": "assert",
+            "rule": "编写单元测试时注意比对接口返回字典的全部字段，断言类型与格式需与 API 定义完全一致。",
+        },
+        {
+            "keyword": "async",
+            "rule": "编写异步逻辑时必须配合 pytest-asyncio，并使用 async with 正确管理资源与上下文。",
+        },
+        {
+            "keyword": "mock",
+            "rule": "单元测试严禁直接发起真实网络或外部系统连接，必须使用 unittest.mock 进行安全隔离。",
+        },
+        {
+            "keyword": "import",
+            "rule": "跨模块导入遵循项目标准 package 路径（如 `from src.xxx import ...`），避免相对路径歧义。",
+        },
+    ]
+
+    def __init__(self, retry_threshold: int = 2):
+        self.retry_threshold = retry_threshold
+
+    def analyze_failure_patterns(self, tasks: List[Dict[str, Any]]) -> Dict[str, int]:
+        """Counts occurrences of specific failure themes across task failure histories."""
+        counts: Dict[str, int] = {}
+        for task in tasks:
+            for failure in task.get("failure_history", []):
+                reason = (failure.get("reason") or "").lower()
+                for rule_entry in self.HEURISTIC_RULES:
+                    kw = rule_entry["keyword"]
+                    if kw in reason:
+                        counts[kw] = counts.get(kw, 0) + 1
+        return counts
+
+    def optimize_guidelines_if_needed(self, tasks: List[Dict[str, Any]], config: Dict[str, Any], config_file: str = "automation/config.json") -> bool:
+        """
+        Detects recurring failure themes exceeding retry_threshold and appends distilled
+        guidelines to config['project_context'] to prevent future occurrences.
+        """
+        pattern_counts = self.analyze_failure_patterns(tasks)
+        current_context = config.get("project_context", "")
+        updated = False
+
+        for rule_entry in self.HEURISTIC_RULES:
+            kw = rule_entry["keyword"]
+            rule_text = rule_entry["rule"]
+            frequency = pattern_counts.get(kw, 0)
+
+            if frequency >= self.retry_threshold and rule_text not in current_context:
+                formatted_rule = f"\n- [自进化规范 针对高频重试] {rule_text}"
+                current_context = current_context.rstrip() + formatted_rule
+                config["project_context"] = current_context
+                updated = True
+                print(f"[Guideline Evolved] Injected new rule for recurrent '{kw}' failure (Frequency: {frequency}): {rule_text}")
+
+        if updated and config_file and os.path.exists(config_file):
+            try:
+                with open(config_file, "w", encoding="utf-8") as f:
+                    json.dump(config, f, indent=2, ensure_ascii=False)
+                print(f"[Guideline Saved] Successfully updated {config_file}")
+            except Exception as e:
+                print(f"[Warning] Failed to save updated guidelines to {config_file}: {e}")
+
+        return updated
+
+
 # --- Task Manager Orchestrator ---
 
 class AutomationWorker:
@@ -268,7 +516,9 @@ class AutomationWorker:
         memory_file: str = "automation/memory.json",
         jules_client: Optional[JulesClient] = None,
         github_client: Optional[GitHubClient] = None,
-        memory_manager: Optional[MemoryManager] = None
+        memory_manager: Optional[MemoryManager] = None,
+        architect_auditor: Optional[ArchitectAuditor] = None,
+        guideline_optimizer: Optional[GuidelineOptimizer] = None
     ):
         self.tasks_file = tasks_file
         self.config_file = config_file
@@ -282,6 +532,14 @@ class AutomationWorker:
         self.memory_manager = memory_manager or MemoryManager(
             memory_file=self.memory_file,
             max_items=self.config.get("max_memory_items", 20)
+        )
+        self.architect_auditor = architect_auditor or ArchitectAuditor(
+            src_dir="src",
+            tests_dir="tests",
+            max_auto_tasks=self.config.get("max_auto_tasks", 2)
+        )
+        self.guideline_optimizer = guideline_optimizer or GuidelineOptimizer(
+            retry_threshold=self.config.get("guideline_retry_threshold", 2)
         )
 
     def load_config(self):
@@ -611,6 +869,24 @@ class AutomationWorker:
 
             elif status in ["done", "blocked"]:
                 continue
+
+        # Step 3 (Level 3): Global Guideline Self-Optimization
+        if self.config.get("enable_guideline_optimization", True) and self.guideline_optimizer:
+            self.guideline_optimizer.optimize_guidelines_if_needed(
+                tasks=self.tasks,
+                config=self.config,
+                config_file=self.config_file
+            )
+
+        # Step 4 (Level 2): Code Quality Audit & Backlog Self-Expansion
+        if self.config.get("enable_backlog_expansion", True) and self.architect_auditor:
+            auto_status = self.config.get("auto_task_status", "pending")
+            new_auto_tasks = self.architect_auditor.audit_and_expand_backlog(
+                existing_tasks=self.tasks,
+                auto_status=auto_status
+            )
+            if new_auto_tasks:
+                self.tasks.extend(new_auto_tasks)
 
         # Save updated state
         self.save_tasks()

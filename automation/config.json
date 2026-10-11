@@ -5,5 +5,10 @@
   "auto_merge": true,
   "enable_memory": true,
   "max_memory_items": 20,
-  "inject_memory_count": 3
+  "inject_memory_count": 3,
+  "enable_backlog_expansion": true,
+  "max_auto_tasks": 2,
+  "auto_task_status": "pending",
+  "enable_guideline_optimization": true,
+  "guideline_retry_threshold": 2
 }

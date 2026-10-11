@@ -31,9 +31,16 @@
   - **事后复盘 (Post-Mortem Reflection)**：任务经历失败但最终修复合入后，系统自动反思并提炼一条经验教训（Lessons Learned），存入 `automation/memory.json`；
   - **经验重放 (Experience Replay)**：后续所有新任务启动时，自动在 Prompt 顶部挂载最相关的过往避坑经验，让 Agent 在项目中实现**“吃一堑长一智，同类错误不犯第二次”**；
   - **失败警示**：任务多次重试彻底阻塞时自动记录阻塞根因，防止后续任务重复踩坑。
+- **🔍 质量巡检与需求自派生 (Backlog Self-Expansion - Level 2)**：
+  - **盲区主动发现**：内置 `ArchitectAuditor` 审计员角色，自动检测 `src/` 中缺失测试用例的模块以及代码内的 `TODO: / FIXME:` 待办；
+  - **任务自主生成**：自动组装结构化需求并追加到 `automation/tasks.json`（自动设置验收标准与 DAG 前置依赖），驱动 Jules 自动补全测试并消灭技术债务；
+  - **安全防抖护栏**：严格配置最大并发自生成数（`max_auto_tasks`）并支持去重，坚决防止无限派生刷单。
+- **📈 全局规范与 Prompt 自进化 (Self-Refining Guidelines - Level 3)**：
+  - **高频痛点统计挖掘**：`GuidelineOptimizer` 实时分析跨任务重试记录，识别反复出现的失败模式（如未 Mock 网络、异步未 close、断言格式不符）；
+  - **规范动态固化**：当某一类错误达到重试阈值（`guideline_retry_threshold`），自动提炼精炼编码守则并写入 `automation/config.json` 的 `project_context`，让全局 Prompt 随着项目规模扩大而自主演进升级。
 - **⏱️ GitHub Actions 定时轮询与状态自同步**：
   - 内置基于 GitHub Actions 的定时调度器（每 15 分钟触发或手动调度）；
-  - 执行完成后自动将更新后的任务状态（`automation/tasks.json`）与经验库（`automation/memory.json`）落盘并提交回版本库。
+  - 执行完成后自动将更新后的任务状态（`tasks.json`）、经验库（`memory.json`）与自进化规范（`config.json`）原子化提交回版本库。
 
 ---
 
@@ -129,7 +136,12 @@ Worker 支持通过环境变量进行定制：
   "auto_merge": true,
   "enable_memory": true,
   "max_memory_items": 20,
-  "inject_memory_count": 3
+  "inject_memory_count": 3,
+  "enable_backlog_expansion": true,
+  "max_auto_tasks": 2,
+  "auto_task_status": "pending",
+  "enable_guideline_optimization": true,
+  "guideline_retry_threshold": 2
 }
 ```
 
@@ -139,6 +151,11 @@ Worker 支持通过环境变量进行定制：
 - `enable_memory`: 是否开启经验记忆与事后复盘自反思机制（Phase 1）。
 - `max_memory_items`: 记忆库最大容量（保留最近的 N 条，默认 20）。
 - `inject_memory_count`: 每次派发新任务时，从记忆库注入到 Prompt 的最近经验条数（默认 3）。
+- `enable_backlog_expansion`: 是否开启代码质量巡检与需求自派生（Level 2）。
+- `max_auto_tasks`: 单次运行允许自动生成的最大活跃任务数（安全防抖）。
+- `auto_task_status`: 自派生任务初始状态（`"pending"` 为全自动执行，也可设为 `"draft"` 等待人工确认）。
+- `enable_guideline_optimization`: 是否开启全局规范自优化（Level 3）。
+- `guideline_retry_threshold`: 同一类失败模式触发提炼为项目规范的重试次数阈值（默认 2 次）。
 
 ---
 
