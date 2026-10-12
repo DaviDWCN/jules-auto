@@ -498,3 +498,44 @@ def test_jules_session_outputs_array_parsing(sample_tasks):
     assert task["pr_number"] == 42
 
 
+
+def test_get_pr_review_status_defaults_approved_when_no_reviews_and_not_required():
+    from automation.worker import GitHubClient
+    with patch("requests.get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = []
+
+        client = GitHubClient(token="test_token", repository="test/repo")
+
+        # When require_review is False and reviews is empty, it should be approved
+        assert client.get_pr_review_status(1, require_review=False) == "approved"
+
+        # When require_review is True and reviews is empty, it should be pending
+        assert client.get_pr_review_status(1, require_review=True) == "pending"
+
+def test_direct_merge_fallback_on_clean_status():
+    from automation.worker import GitHubClient
+    with patch("subprocess.run") as mock_run, \
+         patch("requests.post") as mock_post, \
+         patch("requests.put") as mock_put:
+
+        # Mock gh CLI failure
+        mock_run.return_value.returncode = 1
+
+        # Mock GraphQL failure
+        mock_post.return_value.status_code = 400
+
+        # Mock direct merge success
+        mock_put.return_value.status_code = 200
+
+        client = GitHubClient(token="test_token", repository="test/repo")
+
+        # We need to mock get_pr since GraphQL attempt needs it to fetch node_id
+        with patch.object(client, "get_pr", return_value={"node_id": "test_node"}):
+            assert client.enable_auto_merge(1) is True
+
+            # verify direct merge was called since others failed
+            mock_put.assert_called_once()
+            args, kwargs = mock_put.call_args
+            assert "merge" in args[0]
+            assert kwargs["json"]["merge_method"] == "squash"
