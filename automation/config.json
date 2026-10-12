@@ -4,6 +4,7 @@
   "default_max_attempts": 3,
   "max_active_tasks": 1,
   "auto_merge": true,
+  "require_review": false,
   "session_timeout_minutes": 60,
   "enable_active_polling": true,
   "poll_interval_seconds": 20,

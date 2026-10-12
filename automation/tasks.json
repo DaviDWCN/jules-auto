@@ -1,5 +1,24 @@
 [
   {
+    "id": "TASK-OPT-100",
+    "title": "修复自动合并门禁与直接合入兜底 (Fix Auto-Merge Gates & Direct Merge Fallback)",
+    "description": "在 automation/worker.py 中修复 GitHub PR 自动合并门禁与直接合并兜底逻辑，解决无人值守自动化场景下 PR 无法自动合并的问题：\n1. 支持免人审自愈模式（Review Gate Optimization）：\n   - 在 automation/config.json 中支持配置 require_review（默认值为 false）。\n   - 在 GitHubClient.get_pr_review_status(pr_number) 中：如果 reviews 为空列表，且未配置强制人审（require_review 为 false），应返回 'approved' 而不是 'pending'；只有在 reviews 中存在明确的 'CHANGES_REQUESTED' 时才判定为 'changes_requested'。\n2. 增加直接合并降级（Direct Merge Fallback）：\n   - 当目标分支未配置保护规则且 PR 处于 clean 可合入状态时，GitHub GraphQL enablePullRequestAutoMerge 会返回错误 'Pull request Pull request is in clean status'。\n   - 在 GitHubClient 中实现 direct_merge_pr(pr_number: int, merge_method: str = 'squash') -> bool 方法，调用 GitHub REST API: PUT /repos/{repository}/pulls/{pr_number}/merge，携带 json={'merge_method': merge_method}。\n   - 在 enable_auto_merge(pr_number) 中：若 gh CLI 与 GraphQL Auto-Merge 未成功或抛出异常，自动降级调用 direct_merge_pr() 直接完成合并。\n3. 单元测试与健全性保障：\n   - 在 tests/test_worker.py 中增加单元测试：\n     a) test_get_pr_review_status_defaults_approved_when_no_reviews_and_not_required：验证无 review 时默认 approved。\n     b) test_direct_merge_fallback_on_clean_status：验证当 auto-merge 不适用时降级直接合并。\n   - 确保 pytest 全部测试 100% 通过无报错。",
+    "acceptance_criteria": [
+      "automation/config.json 包含 require_review: false 配置项",
+      "get_pr_review_status 在 require_review 为 false 且无 review 记录时返回 approved，不再因空 review 列表而阻塞",
+      "GitHubClient 实现 direct_merge_pr 并在 enable_auto_merge 中作为降级策略",
+      "在 tests/test_worker.py 中补充单元测试覆盖",
+      "pytest 全部通过无报错"
+    ],
+    "dependencies": [],
+    "max_attempts": 3,
+    "status": "pending",
+    "active_session_id": null,
+    "pr_number": null,
+    "pr_url": null,
+    "failure_history": []
+  },
+  {
     "id": "TASK-OPT-101",
     "title": "\u5b9e\u73b0\u5355\u4efb\u52a1\u5e76\u53d1\u63a7\u5236\u4e0e\u6392\u961f\u95e8\u7981 (Max Active Tasks Gate)",
     "description": "\u5728 automation/worker.py \u7684 AutomationWorker \u4e2d\u5b9e\u73b0\u5e76\u53d1\u4efb\u52a1\u6570\u91cf\u9650\u5236\u4e0e\u6392\u961f\u95e8\u7981\uff0c\u786e\u4fdd\u81ea\u52a8\u5316\u4efb\u52a1\u6309\u5355\u6b65\u4e25\u683c\u4e32\u884c\u63a8\u8fdb\uff0c\u675c\u7edd\u591a\u4efb\u52a1\u5e76\u53d1\u5bfc\u81f4\u7684 Git \u5206\u652f\u51b2\u7a81\u4e0e Jules \u914d\u989d\u4e89\u62a2\u3002\n1. \u8bfb\u53d6 automation/config.json \u4e2d\u7684 max_active_tasks \u914d\u7f6e\uff08\u82e5\u672a\u914d\u7f6e\u9ed8\u8ba4\u503c\u4e3a 1\uff09\u3002\n2. \u5728 AutomationWorker.run_cycle() \u4e2d\u7edf\u8ba1\u5f53\u524d\u5904\u4e8e\u6d3b\u8dc3\u72b6\u6001\uff08status in ['in_progress', 'waiting_for_ci', 'waiting_for_review']\uff09\u7684\u4efb\u52a1\u6570\u3002\n3. \u5f53\u6d3b\u8dc3\u4efb\u52a1\u6570\u91cf\u8fbe\u5230\u6216\u8d85\u8fc7 max_active_tasks \u65f6\uff0c\u8df3\u8fc7\u542f\u52a8\u65b0\u7684 pending \u4efb\u52a1\uff0c\u5e76\u8f93\u51fa\u63d0\u793a\u65e5\u5fd7 [Concurrency Gate] Active tasks count reaches max limit\u3002\n4. \u786e\u4fdd\u53ea\u6709\u5f53\u524d\u7f6e\u6d3b\u8dc3\u4efb\u52a1\u5408\u5165\u53d8\u4e3a done \u6216\u53d8\u4e3a blocked \u540e\uff0c\u540e\u7eed\u5c31\u7eea\u7684 pending \u4efb\u52a1\u624d\u88ab\u5141\u8bb8\u542f\u52a8\u3002\n5. \u5728 tests/test_worker.py \u4e2d\u589e\u52a0\u5355\u5143\u6d4b\u8bd5 test_concurrency_gate_max_active_tasks\uff0c\u9a8c\u8bc1\u5e76\u53d1\u95e8\u7981\u751f\u6548\u3002\n6. \u6267\u884c pytest \u786e\u4fdd\u6240\u6709\u5355\u5143\u6d4b\u8bd5 100% \u901a\u8fc7\u3002",
