@@ -387,4 +387,56 @@ def test_architect_auditor_scan_untested_functions(tmp_path):
     assert "service.py" in untested[0]["file"]
 
 
+def test_memory_manager_get_relevant_lessons(tmp_path):
+    from automation.worker import MemoryManager
+
+    mem_file = tmp_path / "memory.json"
+    mgr = MemoryManager(memory_file=str(mem_file))
+
+    mgr.add_lesson("TASK-101", "Always mock database connection in authentication tests", trigger_reason="Database error")
+    mgr.add_lesson("TASK-102", "Ensure async cleanup runs when closing websocket sessions", trigger_reason="Websocket timeout")
+    mgr.add_lesson("TASK-103", "Validate JSON schema for health check payload responses", trigger_reason="Schema mismatch")
+
+    # Query matching authentication & database
+    relevant = mgr.get_relevant_lessons(title="User authentication middleware", description="Fix database user lookup", limit=2)
+
+    assert len(relevant) == 2
+    # TASK-101 matches 'authentication' and 'database', so it should rank first
+    assert relevant[0]["task_id"] == "TASK-101"
+
+
+def test_worker_run_cycle_exception_isolation(sample_tasks):
+    worker = AutomationWorker(tasks_file=sample_tasks)
+
+    # Task 1 raises error during processing
+    with patch.object(worker, "start_task_session", side_effect=RuntimeError("Simulated API failure")):
+        # Should not raise exception out of run_cycle; handles error gracefully
+        worker.run_cycle()
+
+    # Worker completes cycle without crashing
+    assert worker.tasks[0]["status"] == "pending"
+
+
+def test_worker_rsi_metrics_and_report_generation(sample_tasks, tmp_path):
+    from automation.worker import MemoryManager
+
+    mem_file = tmp_path / "memory.json"
+    mgr = MemoryManager(memory_file=str(mem_file))
+    mgr.add_lesson("TASK-1", "Always mock network calls")
+
+    worker = AutomationWorker(tasks_file=sample_tasks, memory_manager=mgr)
+    worker.config["project_context"] = "Base context.\n- [自进化规范 针对高频重试] Mock network calls"
+    worker.tasks[0]["status"] = "done"
+
+    metrics = worker.get_self_improvement_metrics()
+
+    assert metrics["total_tasks"] == 2
+    assert metrics["done_tasks"] == 1
+    assert metrics["completion_rate_pct"] == 50.0
+    assert metrics["memory_bank_lessons_count"] == 1
+    assert metrics["evolved_guidelines_count"] == 1
+
+    report = worker.generate_improvement_report()
+    assert "Jules-Auto Self-Improvement & System Health Telemetry" in report
+    assert "Completion Rate: 50.0%" in report
 

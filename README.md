@@ -27,10 +27,13 @@
   - **精细化 CI 状态判定**：智能区分 `pending`、`failure` 与 `success`，避免在 CI 构建中被误判为失败；
   - **Review 门禁审查**：监听审查意见（`approved` / `changes_requested` / `pending`），遭遇修改请求时自动进入重试闭环；
   - **自动合入 (Auto-Merge)**：当 CI 与 Review 均通过时，自动调用 `gh pr merge --auto --squash` 发起合并请求，直至 PR 成功合入主分支。
-- **🧠 自我反思与经验记忆库 (Self-Reflection & Memory Bank - Phase 1)**：
+- **🧠 自我反思与经验记忆库 (Self-Reflection & Memory Bank - Phase 1 / RSI)**：
   - **事后复盘 (Post-Mortem Reflection)**：任务经历失败但最终修复合入后，系统自动反思并提炼一条经验教训（Lessons Learned），存入 `automation/memory.json`；
-  - **经验重放 (Experience Replay)**：后续所有新任务启动时，自动在 Prompt 顶部挂载最相关的过往避坑经验，让 Agent 在项目中实现**“吃一堑长一智，同类错误不犯第二次”**；
+  - **相关性检索 (Relevance-Based Experience Replay)**：派发新任务时，利用关键词相关度打分与时效衰减算法（`get_relevant_lessons`），在 Prompt 顶部精简注入与当前需求最匹配的避坑经验；
   - **失败警示**：任务多次重试彻底阻塞时自动记录阻塞根因，防止后续任务重复踩坑。
+- **📊 递归自进化与系统诊断 (Recursive Self-Improvement & Telemetry)**：
+  - **异常隔离防护**：Worker 调度循环对单任务的 API/网络故障实现隔离，单任务故障不会影响其他任务流转；
+  - **系统健康与自进化诊断**：自动汇总任务完成率、首派通过率、平均重试数、经验库容量与自进化规范数，并在每轮循环结束输出诊断报告。
 - **🔍 质量巡检与需求自派生 (Backlog Self-Expansion - Level 2)**：
   - **盲区主动发现**：内置 `ArchitectAuditor` 审计员角色，自动检测 `src/` 中缺失测试用例的模块以及代码内的 `TODO: / FIXME:` 待办；
   - **任务自主生成**：自动组装结构化需求并追加到 `automation/tasks.json`（自动设置验收标准与 DAG 前置依赖），驱动 Jules 自动补全测试并消灭技术债务；
