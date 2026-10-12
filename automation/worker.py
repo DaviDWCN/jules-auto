@@ -255,6 +255,32 @@ class MemoryManager:
     def get_recent_lessons(self, limit: int = 5) -> List[Dict[str, Any]]:
         return self.memories[-limit:]
 
+    def get_relevant_lessons(self, title: str = "", description: str = "", limit: int = 5) -> List[Dict[str, Any]]:
+        """
+        RSI Feature Item 1: Relevance-based experience memory retrieval.
+        Scores memories based on keyword overlap with task title and description.
+        Falls back to recency when scores are equal.
+        """
+        if not self.memories:
+            return []
+
+        text = f"{title} {description}".lower()
+        words = set(w for w in text.replace("-", " ").replace("_", " ").split() if len(w) > 2)
+
+        if not words:
+            return self.get_recent_lessons(limit=limit)
+
+        scored = []
+        for idx, m in enumerate(self.memories):
+            mem_text = f"{m.get('lesson', '')} {m.get('trigger_reason', '')} {m.get('task_id', '')}".lower()
+            score = sum(1 for w in words if w in mem_text)
+            # Tie breaker: recency index
+            scored.append((score, idx, m))
+
+        # Sort descending by score, then index (recency)
+        scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        return [item[2] for item in scored[:limit]]
+
 
 # --- Level 2: Code Quality Auditor & Backlog Synthesizer ---
 
@@ -738,15 +764,19 @@ class AutomationWorker:
                 "====================================\n"
             ])
 
-        # Inject lessons learned from repository memory bank (Phase 1 Self-Improvement)
+        # Inject lessons learned from repository memory bank (Phase 1 Self-Improvement / RSI Relevance)
         if self.config.get("enable_memory", True) and self.memory_manager:
             inject_count = self.config.get("inject_memory_count", 3)
-            recent_lessons = self.memory_manager.get_recent_lessons(limit=inject_count)
-            if recent_lessons:
+            relevant_lessons = self.memory_manager.get_relevant_lessons(
+                title=task.get("title", ""),
+                description=task.get("description", ""),
+                limit=inject_count
+            )
+            if relevant_lessons:
                 prompt_lines.extend([
                     "=== Repository Lessons Learned (Avoid repeating past mistakes) ==="
                 ])
-                for m in recent_lessons:
+                for m in relevant_lessons:
                     prompt_lines.append(f"- [{m.get('task_id')}]: {m.get('lesson')}")
                 prompt_lines.extend([
                     "===================================================================\n"
@@ -971,24 +1001,27 @@ class AutomationWorker:
         # Step 1: Reconcile sessions (Rule 1)
         self.reconcile_sessions()
 
-        # Step 2: Process tasks
+        # Step 2: Process tasks with exception isolation (RSI Item 2)
         for task in self.tasks:
-            status = task.get("status")
+            try:
+                status = task.get("status")
 
-            if status == "pending":
-                if self.is_dependency_satisfied(task):
-                    self.start_task_session(task)
-                else:
-                    print(f"[Skipped] Task {task['id']} dependencies not yet satisfied.")
+                if status == "pending":
+                    if self.is_dependency_satisfied(task):
+                        self.start_task_session(task)
+                    else:
+                        print(f"[Skipped] Task {task['id']} dependencies not yet satisfied.")
 
-            elif status == "in_progress":
-                self.update_task_session_status(task)
+                elif status == "in_progress":
+                    self.update_task_session_status(task)
 
-            elif status in ["waiting_for_ci", "waiting_for_review"]:
-                self.check_pr_and_merge_gates(task)
+                elif status in ["waiting_for_ci", "waiting_for_review"]:
+                    self.check_pr_and_merge_gates(task)
 
-            elif status in ["done", "blocked"]:
-                continue
+                elif status in ["done", "blocked"]:
+                    continue
+            except Exception as e:
+                print(f"[Error Handler] Exception encountered while processing task {task.get('id')}: {e}")
 
         # Step 3 (Level 3): Global Guideline Self-Optimization
         if self.config.get("enable_guideline_optimization", True) and self.guideline_optimizer:
@@ -1010,7 +1043,58 @@ class AutomationWorker:
 
         # Save updated state
         self.save_tasks()
+
+        # Step 5 (RSI Item 3): Report Self-Improvement & System Health Telemetry
+        print(self.generate_improvement_report())
         print("=== Automation Worker Cycle Complete ===")
+
+    def get_self_improvement_metrics(self) -> Dict[str, Any]:
+        """
+        RSI Feature Item 3: Computes system health and self-improvement telemetry.
+        """
+        total = len(self.tasks)
+        done_tasks = [t for t in self.tasks if t.get("status") == "done"]
+        blocked_tasks = [t for t in self.tasks if t.get("status") == "blocked"]
+        in_progress_tasks = [t for t in self.tasks if t.get("status") in ["in_progress", "waiting_for_ci", "waiting_for_review"]]
+        pending_tasks = [t for t in self.tasks if t.get("status") == "pending"]
+
+        first_pass_done = [t for t in done_tasks if len(t.get("failure_history", [])) == 0]
+        total_failures = sum(len(t.get("failure_history", [])) for t in self.tasks)
+
+        completion_rate = (len(done_tasks) / total * 100.0) if total > 0 else 0.0
+        first_pass_rate = (len(first_pass_done) / len(done_tasks) * 100.0) if done_tasks else 0.0
+        avg_retries = (total_failures / total) if total > 0 else 0.0
+
+        memory_count = len(self.memory_manager.memories) if self.memory_manager else 0
+        context_str = str(self.config.get("project_context", ""))
+        guidelines_count = context_str.count("[自进化规范")
+
+        return {
+            "total_tasks": total,
+            "done_tasks": len(done_tasks),
+            "pending_tasks": len(pending_tasks),
+            "in_progress_tasks": len(in_progress_tasks),
+            "blocked_tasks": len(blocked_tasks),
+            "completion_rate_pct": round(completion_rate, 1),
+            "first_pass_success_pct": round(first_pass_rate, 1),
+            "average_retries_per_task": round(avg_retries, 2),
+            "memory_bank_lessons_count": memory_count,
+            "evolved_guidelines_count": guidelines_count,
+        }
+
+    def generate_improvement_report(self) -> str:
+        """Generates formatted diagnostic report of RSI performance."""
+        metrics = self.get_self_improvement_metrics()
+        report_lines = [
+            "\n=== 🚀 Jules-Auto Self-Improvement & System Health Telemetry ===",
+            f"Tasks Progress: Total: {metrics['total_tasks']} | Done: {metrics['done_tasks']} | In-Progress: {metrics['in_progress_tasks']} | Blocked: {metrics['blocked_tasks']}",
+            f"Completion Rate: {metrics['completion_rate_pct']}% | First-Pass Success: {metrics['first_pass_success_pct']}%",
+            f"Average Retries/Task: {metrics['average_retries_per_task']}",
+            f"Repository Memory Bank: {metrics['memory_bank_lessons_count']} lessons learned",
+            f"Evolved Project Guidelines: {metrics['evolved_guidelines_count']} rules active",
+            "=================================================================\n"
+        ]
+        return "\n".join(report_lines)
 
 
 def main():
