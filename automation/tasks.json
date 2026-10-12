@@ -53,12 +53,12 @@
       "TASK-OPT-101"
     ],
     "max_attempts": 3,
-    "status": "waiting_for_ci",
+    "status": "done",
     "active_session_id": "2887960088827460640",
     "pr_number": 9,
     "pr_url": "https://github.com/DaviDWCN/jules-auto/pull/9",
     "failure_history": [],
-    "session_started_at": "2026-10-12T14:52:56.776116+00:00"
+    "session_started_at": null
   },
   {
     "id": "TASK-OPT-102",
