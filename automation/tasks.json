@@ -1,5 +1,105 @@
 [
   {
+    "id": "TASK-OPT-101",
+    "title": "实现单任务并发控制与排队门禁 (Max Active Tasks Gate)",
+    "description": "在 automation/worker.py 的 AutomationWorker 中实现并发任务数量限制与排队门禁，确保自动化任务按单步严格串行推进，杜绝多任务并发导致的 Git 分支冲突与 Jules 配额争抢。\n1. 读取 automation/config.json 中的 max_active_tasks 配置（若未配置默认值为 1）。\n2. 在 AutomationWorker.run_cycle() 中统计当前处于活跃状态（status in ['in_progress', 'waiting_for_ci', 'waiting_for_review']）的任务数。\n3. 当活跃任务数量达到或超过 max_active_tasks 时，跳过启动新的 pending 任务，并输出提示日志 [Concurrency Gate] Active tasks count reaches max limit。\n4. 确保只有当前置活跃任务合入变为 done 或变为 blocked 后，后续就绪的 pending 任务才被允许启动。\n5. 在 tests/test_worker.py 中增加单元测试 test_concurrency_gate_max_active_tasks，验证并发门禁生效。\n6. 执行 pytest 确保所有单元测试 100% 通过。",
+    "acceptance_criteria": [
+      "automation/config.json 支持 max_active_tasks 配置项（默认值为 1）",
+      "AutomationWorker.run_cycle() 严格遵守 max_active_tasks 限制，活跃任务达上限时暂缓启动新任务",
+      "在 tests/test_worker.py 中增加 test_concurrency_gate_max_active_tasks 单元测试",
+      "pytest 全部通过无报错"
+    ],
+    "dependencies": [],
+    "max_attempts": 3,
+    "status": "pending",
+    "active_session_id": null,
+    "pr_number": null,
+    "pr_url": null,
+    "failure_history": []
+  },
+  {
+    "id": "TASK-OPT-102",
+    "title": "实现工作流内实时自旋轮询与快速闭环 (In-Run Active Polling Loop)",
+    "description": "为 automation/worker.py 引入工作流内的活跃自旋轮询机制（Active Polling Loop），避免每次状态推进都依赖 GitHub 15 分钟 Cron 调度，实现单次 GitHub Action 运行内 3~5 分钟极速闭环。\n1. 在 automation/config.json 中增加配置：enable_active_polling（默认 true）、poll_interval_seconds（默认 20）、max_poll_minutes（默认 10）。\n2. 在 AutomationWorker 中实现 run_polling_loop() 方法：当存在活跃任务（in_progress / waiting_for_ci / waiting_for_review）时在单一进程中保持自旋循环，每隔 poll_interval_seconds 秒执行一次更新检查，直至当前活跃任务变为 done/blocked，或达到最大轮询时长 max_poll_minutes。\n3. 在 worker.py 的 CLI 与 main 入口增加 --poll 参数选项，当开启时调用 run_polling_loop() 代替单一 run_cycle()。\n4. 在 tests/test_worker.py 中编写单元测试 test_active_polling_loop，模拟轮询并验证退出条件。\n5. 执行 pytest 确保所有测试通过。",
+    "acceptance_criteria": [
+      "automation/config.json 包含 enable_active_polling, poll_interval_seconds, max_poll_minutes 配置项",
+      "AutomationWorker 实现 run_polling_loop()，带超时保护与完成退出机制",
+      "worker.py 支持 --poll 命令行开关",
+      "在 tests/test_worker.py 中增加对应单元测试",
+      "pytest 全部通过无报错"
+    ],
+    "dependencies": [
+      "TASK-OPT-101"
+    ],
+    "max_attempts": 3,
+    "status": "pending",
+    "active_session_id": null,
+    "pr_number": null,
+    "pr_url": null,
+    "failure_history": []
+  },
+  {
+    "id": "TASK-OPT-103",
+    "title": "捕获真实 CI 报错日志与 Traceback 注入 (Real Traceback & Error Log Injection)",
+    "description": "升级 automation/worker.py 中的 GitHubClient 与 AutomationWorker.record_task_failure，在 CI 检查失败时获取具体的失败堆栈并注入重试 Prompt，让 Jules 具备针对性修复能力。\n1. 在 GitHubClient 中增强 get_pr_checks(pr_number)：当 check_runs 状态为 failure 时，从失败的 check-run 对象中提取 output.title, output.summary 和 text（包含具体的 pytest 失败断言或错误信息）。\n2. 将提取到的详细报错信息截取安全长度（500~1000 字符，保留核心 AssertionError 与 Traceback）存入 failure_history 的 reason 字段。\n3. 确保 build_task_prompt() 能够将具体报错堆栈清晰呈现给 Jules（包含失败原因与详细输出）。\n4. 在 tests/test_worker.py 中编写测试 test_ci_failure_traceback_extraction_and_prompt_injection，使用 mock check-runs 验证报错提取与注入。\n5. 执行 pytest 确保所有测试通过。",
+    "acceptance_criteria": [
+      "GitHubClient.get_pr_checks() 支持提取失败 Check Run 的 output 详情与错误堆栈",
+      "AutomationWorker.record_task_failure() 保存捕获的真实报错堆栈信息",
+      "build_task_prompt() 在重试提示词中注入真实的 Traceback 详情",
+      "在 tests/test_worker.py 中补充对应单元测试",
+      "pytest 全部通过无报错"
+    ],
+    "dependencies": [
+      "TASK-OPT-102"
+    ],
+    "max_attempts": 3,
+    "status": "pending",
+    "active_session_id": null,
+    "pr_number": null,
+    "pr_url": null,
+    "failure_history": []
+  },
+  {
+    "id": "TASK-OPT-104",
+    "title": "自动生成 GitHub Actions 运行总结看板 (Step Summary Telemetry Dashboard)",
+    "description": "在每次 Worker 调度周期完成时，自动将系统健康状态与任务看板输出到 GitHub Actions 的 $GITHUB_STEP_SUMMARY，实现运行可视化。\n1. 在 AutomationWorker 中实现 write_github_step_summary() 方法。\n2. 读取环境变量 GITHUB_STEP_SUMMARY，若该路径存在，以 UTF-8 追加 Markdown 格式看板：\n   - 任务状态表格：包含任务 ID、任务标题、状态徽章（如 ✅ done, 🔄 in_progress, ⏳ pending, ⛔ blocked）、PR 链接与重试次数。\n   - 自我进化与遥测卡片：经验库条目数（Memory Bank Items）、自进化规范条数（Evolved Guidelines）、总体完成率与首派成功率。\n   - 避坑经验精要（Recent Lessons Learned 列表）。\n3. 在 run_cycle() 结束时自动调用该方法。\n4. 在 tests/test_worker.py 中编写测试 test_write_github_step_summary，mock 环境变量并断言 Markdown 输出内容。\n5. 执行 pytest 确保所有测试通过。",
+    "acceptance_criteria": [
+      "AutomationWorker 实现 write_github_step_summary() 方法",
+      "当检测到 GITHUB_STEP_SUMMARY 环境变量时，自动写入格式规范美观的 GitHub Markdown 表格与指标",
+      "在 tests/test_worker.py 中增加 test_write_github_step_summary 单元测试",
+      "pytest 全部通过无报错"
+    ],
+    "dependencies": [
+      "TASK-OPT-103"
+    ],
+    "max_attempts": 3,
+    "status": "pending",
+    "active_session_id": null,
+    "pr_number": null,
+    "pr_url": null,
+    "failure_history": []
+  },
+  {
+    "id": "TASK-OPT-105",
+    "title": "实现任务阻塞自动创建 GitHub Issue 告警与协同 (Human-in-the-Loop Issue Alerting)",
+    "description": "实现任务多次重试失败进入 blocked 状态时的人工介入兜底告警机制。\n1. 在 GitHubClient 中实现 create_issue(title: str, body: str, labels: Optional[List[str]] = None) 方法，调用 GitHub REST API POST /repos/{repo}/issues。\n2. 在 automation/config.json 中增加 enable_issue_alerts 配置项（默认 true）。\n3. 当任务达到 max_attempts 并在 record_task_failure() 中转为 blocked 状态时，自动调用 create_issue 创建工单：\n   - Title: [Blocked Task Alert] {task_id}: {task_title}\n   - Body: 包含任务需求、验收标准、历次重试的失败日志/Traceback 以及排查建议\n   - Labels: ['automation-blocked', 'bug']\n4. 在任务对象中记录 alert_issue_url，防止重复创建。\n5. 在 tests/test_worker.py 中增加单元测试 test_blocked_task_creates_github_issue 验证此逻辑。\n6. 执行 pytest 确保全部测试通过。",
+    "acceptance_criteria": [
+      "GitHubClient 实现 create_issue() 方法",
+      "任务转为 blocked 时自动创建包含诊断信息的 GitHub Issue，并记录 alert_issue_url 避免重复打扰",
+      "在 tests/test_worker.py 中补充对应单元测试",
+      "pytest 全部通过无报错"
+    ],
+    "dependencies": [
+      "TASK-OPT-104"
+    ],
+    "max_attempts": 3,
+    "status": "pending",
+    "active_session_id": null,
+    "pr_number": null,
+    "pr_url": null,
+    "failure_history": []
+  },
+  {
     "id": "TASK-101",
     "title": "Add API health details endpoint",
     "description": "Extend health check API in src/app.py to include system uptime and database status check. Implement get_health_details() function.",
@@ -9,7 +109,9 @@
       "Add unit tests in tests/test_app.py covering get_health_details()",
       "All pytest tests pass with zero warnings"
     ],
-    "dependencies": [],
+    "dependencies": [
+      "TASK-OPT-105"
+    ],
     "max_attempts": 3,
     "status": "pending",
     "active_session_id": null,
@@ -35,45 +137,5 @@
     "pr_number": null,
     "pr_url": null,
     "failure_history": []
-  },
-  {
-    "id": "TASK-AUTO-101",
-    "title": "\u8865\u5168 utils.py \u6a21\u5757\u5355\u5143\u6d4b\u8bd5\u4e0e\u8986\u76d6\u7387",
-    "description": "\u4ee3\u7801\u8d28\u91cf\u5de1\u68c0\u53d1\u73b0 src/utils.py \u7f3a\u5c11\u81ea\u52a8\u5316\u6d4b\u8bd5\u7528\u4f8b\u6587\u4ef6\u3002\u8bf7\u5728 tests/ \u76ee\u5f55\u4e0b\u521b\u5efa\u5bf9\u5e94\u6d4b\u8bd5\uff0c\u8986\u76d6\u6838\u5fc3\u51fd\u6570\u4e0e\u5f02\u5e38\u5206\u652f\u3002",
-    "acceptance_criteria": [
-      "\u5728 tests/ \u76ee\u5f55\u4e0b\u65b0\u5efa test_utils.py \u5e76\u8986\u76d6 utils.py \u7684\u516c\u5f00\u51fd\u6570",
-      "\u6d4b\u8bd5\u5305\u542b\u6b63\u5e38\u8f93\u5165\u4e0e\u8fb9\u754c\u5f02\u5e38\u65ad\u8a00",
-      "pytest \u5168\u90e8\u901a\u8fc7"
-    ],
-    "dependencies": [
-      "TASK-102"
-    ],
-    "max_attempts": 3,
-    "status": "pending",
-    "active_session_id": null,
-    "pr_number": null,
-    "pr_url": null,
-    "failure_history": [],
-    "is_auto_generated": true
-  },
-  {
-    "id": "TASK-AUTO-102",
-    "title": "\u5b9e\u73b0 utils.py \u5f85\u529e: implement safe_json_loads with fallback default value",
-    "description": "\u4ee3\u7801\u5ba1\u8ba1\u5728 src/utils.py \u7b2c 7 \u884c\u53d1\u73b0\u5f85\u529e\u4e8b\u9879: implement safe_json_loads with fallback default value\u3002\u8bf7\u5b9e\u73b0\u8be5\u529f\u80fd\u5e76\u79fb\u9664\u8be5 TODO \u6ce8\u91ca\u3002",
-    "acceptance_criteria": [
-      "\u5b8c\u6210 src/utils.py \u4e2d\u7684\u5f85\u529e\u9700\u6c42: implement safe_json_loads with fallback default value",
-      "\u7f16\u5199\u6216\u8865\u5145\u5bf9\u5e94\u5355\u5143\u6d4b\u8bd5",
-      "pytest \u5168\u90e8\u901a\u8fc7"
-    ],
-    "dependencies": [
-      "TASK-AUTO-101"
-    ],
-    "max_attempts": 3,
-    "status": "pending",
-    "active_session_id": null,
-    "pr_number": null,
-    "pr_url": null,
-    "failure_history": [],
-    "is_auto_generated": true
   }
 ]
