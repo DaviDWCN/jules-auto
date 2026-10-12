@@ -811,6 +811,10 @@ class AutomationWorker:
         title = f"[{task['id']}] {task['title']}"
         repo = self.github_client.repository or None
 
+        if not self.jules_client.api_key:
+            print(f"[Configuration Error] Cannot start session for Task {task['id']}: JULES_API_KEY is not set! Please configure JULES_API_KEY in GitHub Repository Secrets.")
+            return
+
         try:
             session = self.jules_client.create_session(prompt=prompt, title=title, repository=repo)
             session_id = session.get("id") or session.get("sessionId") or session.get("name")

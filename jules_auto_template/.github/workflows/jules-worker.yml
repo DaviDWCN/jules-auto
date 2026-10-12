@@ -5,6 +5,11 @@ on:
     # Run every 15 minutes
     - cron: '*/15 * * * *'
   workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'automation/tasks.json'
+      - 'automation/config.json'
 
 concurrency:
   group: jules-worker-orchestration
