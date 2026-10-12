@@ -8,8 +8,7 @@ on:
   push:
     branches: [ main ]
     paths:
-      - 'automation/tasks.json'
-      - 'automation/config.json'
+      - 'automation/**'
 
 concurrency:
   group: jules-worker-orchestration

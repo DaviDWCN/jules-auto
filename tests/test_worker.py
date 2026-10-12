@@ -440,3 +440,61 @@ def test_worker_rsi_metrics_and_report_generation(sample_tasks, tmp_path):
     assert "Jules-Auto Self-Improvement & System Health Telemetry" in report
     assert "Completion Rate: 50.0%" in report
 
+
+def test_jules_client_create_session_payload():
+    with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {
+            "sources": [
+                {
+                    "name": "sources/github-org-repo",
+                    "githubRepo": {"owner": "org", "repo": "repo"}
+                }
+            ]
+        }
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = {"id": "sess-123"}
+
+        client = JulesClient(api_key="test-key")
+        session = client.create_session(
+            prompt="Test prompt",
+            title="[TASK-1] Test title",
+            repository="org/repo"
+        )
+
+        assert session["id"] == "sess-123"
+        call_kwargs = mock_post.call_args[1]
+        payload = call_kwargs["json"]
+        assert payload["title"] == "[TASK-1] Test title"
+        assert payload["automationMode"] == "AUTO_CREATE_PR"
+        assert payload["sourceContext"]["source"] == "sources/github-org-repo"
+        assert payload["sourceContext"]["githubRepoContext"]["startingBranch"] == "main"
+
+
+def test_jules_session_outputs_array_parsing(sample_tasks):
+    mock_jules = MagicMock()
+    mock_jules.get_session.return_value = {
+        "id": "sess-999",
+        "state": "COMPLETED",
+        "outputs": [
+            {
+                "pullRequest": {
+                    "url": "https://github.com/org/repo/pull/42",
+                    "title": "PR Title"
+                }
+            }
+        ]
+    }
+
+    worker = AutomationWorker(tasks_file=sample_tasks, jules_client=mock_jules)
+    task = worker.tasks[0]
+    task["status"] = "in_progress"
+    task["active_session_id"] = "sess-999"
+
+    worker.update_task_session_status(task)
+
+    assert task["status"] == "waiting_for_ci"
+    assert task["pr_url"] == "https://github.com/org/repo/pull/42"
+    assert task["pr_number"] == 42
+
+

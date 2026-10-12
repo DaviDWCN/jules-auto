@@ -14,6 +14,7 @@ import time
 import subprocess
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
+import re
 import requests
 
 
@@ -32,17 +33,77 @@ class JulesClient:
             "Content-Type": "application/json",
         }
 
-    def create_session(self, prompt: str, title: str, repository: Optional[str] = None) -> Dict[str, Any]:
-        """POST /v1alpha/sessions to start a session."""
+    def list_sources(self) -> List[Dict[str, Any]]:
+        """GET /v1alpha/sources to retrieve connected GitHub repositories."""
+        url = f"{self.base_url}/v1alpha/sources"
+        try:
+            response = requests.get(url, headers=self._get_headers(), timeout=30)
+            if response.status_code != 200:
+                print(f"[Warning] Failed to list sources ({response.status_code}): {response.text}")
+                return []
+            data = response.json()
+            if isinstance(data, list):
+                return data
+            return data.get("sources", [])
+        except Exception as e:
+            print(f"[Warning] Exception while listing sources: {e}")
+            return []
+
+    def get_source_for_repo(self, repository: str) -> Optional[str]:
+        """Finds source name (e.g. 'sources/github/owner/repo') for a given owner/repo."""
+        if not repository:
+            return None
+        parts = repository.strip("/").split("/")
+        if len(parts) < 2:
+            return None
+        owner, repo = parts[-2].lower(), parts[-1].lower()
+
+        try:
+            sources = self.list_sources()
+            for s in sources:
+                gh_repo = s.get("githubRepo", {})
+                s_owner = (gh_repo.get("owner") or "").lower()
+                s_repo = (gh_repo.get("repo") or "").lower()
+                if s_owner == owner and s_repo == repo:
+                    return s.get("name")
+                s_name = (s.get("name") or "").lower()
+                if f"{owner}/{repo}" in s_name or f"{owner}-{repo}" in s_name:
+                    return s.get("name")
+            if sources:
+                return sources[0].get("name")
+        except Exception as e:
+            print(f"[Warning] Error matching repository to source: {e}")
+
+        # Default fallback standard format
+        return f"sources/github/{owner}/{repo}"
+
+    def create_session(
+        self,
+        prompt: str,
+        title: str,
+        repository: Optional[str] = None,
+        starting_branch: str = "main"
+    ) -> Dict[str, Any]:
+        """POST /v1alpha/sessions to start a session with official schema."""
         url = f"{self.base_url}/v1alpha/sessions"
-        payload = {
+        payload: Dict[str, Any] = {
             "title": title,
             "prompt": prompt,
+            "automationMode": "AUTO_CREATE_PR",
         }
         if repository:
-            payload["repository"] = repository
+            source_name = self.get_source_for_repo(repository)
+            if source_name:
+                payload["sourceContext"] = {
+                    "source": source_name,
+                    "githubRepoContext": {
+                        "startingBranch": starting_branch
+                    }
+                }
 
         response = requests.post(url, headers=self._get_headers(), json=payload, timeout=30)
+        if response.status_code not in [200, 201]:
+            print(f"[Jules API Error] POST {url} returned {response.status_code}: {response.text}")
         response.raise_for_status()
         return response.json()
 
@@ -854,11 +915,22 @@ class AutomationWorker:
                 pr_url = session.get("pr_url") or session.get("pullRequestUrl")
                 pr_number = session.get("pr_number") or session.get("pullRequestNumber")
 
-                # Check output field if pr info in outputs
-                outputs = session.get("outputs", {})
-                if not pr_url and isinstance(outputs, dict):
+                # Parse outputs which is a list in official Jules API: outputs[].pullRequest.url
+                outputs = session.get("outputs", [])
+                if not pr_url and isinstance(outputs, list):
+                    for item in outputs:
+                        if isinstance(item, dict) and "pullRequest" in item:
+                            pr_info = item["pullRequest"]
+                            pr_url = pr_info.get("url")
+                            break
+                elif not pr_url and isinstance(outputs, dict):
                     pr_url = outputs.get("pull_request_url") or outputs.get("pr_url")
                     pr_number = outputs.get("pull_request_number") or outputs.get("pr_number")
+
+                if pr_url and not pr_number:
+                    match = re.search(r"/pull/(\d+)", str(pr_url))
+                    if match:
+                        pr_number = int(match.group(1))
 
                 if pr_url:
                     task["pr_url"] = pr_url
