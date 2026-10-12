@@ -304,7 +304,9 @@ def test_architect_auditor_backlog_synthesis(tmp_path):
     assert len(new_tasks) == 2
     assert any("payment" in t["title"] for t in new_tasks)
     assert any("rate limiting" in t["title"] for t in new_tasks)
-    assert all(t["dependencies"] == ["TASK-1"] for t in new_tasks)
+    # The first new task depends on TASK-1, the second depends on the first new task.
+    assert new_tasks[0]["dependencies"] == ["TASK-1"]
+    assert new_tasks[1]["dependencies"] == [new_tasks[0]["id"]]
 
 
 def test_guideline_optimizer_recurrence(tmp_path):
@@ -402,6 +404,58 @@ def test_session_timeout_watchdog(sample_tasks):
     assert "timed out" in task["failure_history"][0]["reason"]
     assert task["status"] == "pending"  # Eligible for clean retry
 
+
+def test_architect_auditor_dependencies_append_to_backlog_tail(tmp_path):
+    from automation.worker import ArchitectAuditor
+    src_dir = tmp_path / "src"
+    tests_dir = tmp_path / "tests"
+    src_dir.mkdir()
+    tests_dir.mkdir()
+
+    (src_dir / "untested_module.py").write_text("def my_func(): pass")
+    (src_dir / "untested_module2.py").write_text("def my_func2(): pass")
+
+    auditor = ArchitectAuditor(src_dir=str(src_dir), tests_dir=str(tests_dir), max_auto_tasks=5)
+
+    existing_tasks = [
+        {"id": "TASK-EXISTING-1", "title": "Existing 1", "status": "pending"},
+        {"id": "TASK-EXISTING-2", "title": "Existing 2", "status": "in_progress"}
+    ]
+
+    new_tasks = auditor.audit_and_expand_backlog(existing_tasks)
+
+    assert len(new_tasks) >= 2
+
+    # First generated task should depend on the last task in the existing tasks list
+    assert new_tasks[0]["dependencies"] == ["TASK-EXISTING-2"]
+    # The subsequent generated tasks should depend on the previous generated task
+    assert new_tasks[1]["dependencies"] == [new_tasks[0]["id"]]
+
+def test_save_tasks_preserves_utf8_chinese(tmp_path):
+    from automation.worker import AutomationWorker
+
+    # Create worker with a temp task file
+    task_file = tmp_path / "tasks.json"
+    worker = AutomationWorker(
+        tasks_file=str(task_file),
+        jules_client=None,
+        memory_manager=None,
+        guideline_optimizer=None
+    )
+
+    worker.tasks = [
+        {"id": "TASK-CH-1", "title": "测试中文", "description": "这是描述"}
+    ]
+
+    worker.save_tasks()
+
+    # Read raw content as text
+    with open(task_file, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # Verify we actually see Chinese characters, not \u escaped
+    assert "测试中文" in content
+    assert "\\u" not in content
 
 def test_architect_auditor_scan_untested_functions(tmp_path):
     from automation.worker import ArchitectAuditor
