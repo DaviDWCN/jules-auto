@@ -528,7 +528,12 @@ class ArchitectAuditor:
 
         # Anchor dependency to latest completed task if available
         done_task_ids = [t["id"] for t in existing_tasks if t.get("status") == "done"]
-        dep_id = [done_task_ids[-1]] if done_task_ids else []
+        if done_task_ids:
+            dep_id = [done_task_ids[-1]]
+        elif existing_tasks:
+            dep_id = [existing_tasks[-1]["id"]]
+        else:
+            dep_id = []
 
         existing_ids = [t["id"] for t in existing_tasks]
         def next_auto_id():
@@ -567,6 +572,7 @@ class ArchitectAuditor:
                 "failure_history": [],
                 "is_auto_generated": True
             })
+            dep_id = [task_id]
             allowed_slots -= 1
 
         # 2. Inspect untested functions within existing modules (AST analysis)
@@ -597,6 +603,7 @@ class ArchitectAuditor:
                     "failure_history": [],
                     "is_auto_generated": True
                 })
+                dep_id = [task_id]
                 allowed_slots -= 1
 
         # 3. Inspect TODO comments
@@ -627,6 +634,7 @@ class ArchitectAuditor:
                     "failure_history": [],
                     "is_auto_generated": True
                 })
+                dep_id = [task_id]
                 allowed_slots -= 1
 
         if new_tasks:
@@ -764,15 +772,15 @@ class AutomationWorker:
 
     def load_tasks(self):
         if os.path.exists(self.tasks_file):
-            with open(self.tasks_file, "r") as f:
+            with open(self.tasks_file, "r", encoding="utf-8") as f:
                 self.tasks = json.load(f)
         else:
             self.tasks = []
 
     def save_tasks(self):
         os.makedirs(os.path.dirname(self.tasks_file), exist_ok=True)
-        with open(self.tasks_file, "w") as f:
-            json.dump(self.tasks, f, indent=2)
+        with open(self.tasks_file, "w", encoding="utf-8") as f:
+            json.dump(self.tasks, f, indent=2, ensure_ascii=False)
 
     def reconcile_sessions(self):
         """
