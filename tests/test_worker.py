@@ -52,6 +52,42 @@ def test_dependency_checking(sample_tasks):
     assert worker.is_dependency_satisfied(worker.tasks[1]) is True
 
 
+def test_concurrency_gate_max_active_tasks(sample_tasks, capsys):
+    worker = AutomationWorker(tasks_file=sample_tasks)
+    # Set config to max 1 active task
+    worker.config["max_active_tasks"] = 1
+
+    # Remove dependency of TASK-2 on TASK-1 so it can start if allowed
+    worker.tasks[1]["dependencies"] = []
+
+    # Mark TASK-1 as active
+    worker.tasks[0]["status"] = "in_progress"
+    worker.tasks[0]["active_session_id"] = "session-1"
+
+    # TASK-2 is pending
+    assert worker.tasks[1]["status"] == "pending"
+
+    # We need to mock update_task_session_status so it doesn't try to fetch real session for TASK-1
+    # and we also mock start_task_session just in case, though it shouldn't be called.
+    with patch.object(worker, "update_task_session_status") as mock_update, \
+         patch.object(worker, "start_task_session") as mock_start:
+
+        worker.run_cycle()
+
+        # Output should mention the concurrency gate
+        captured = capsys.readouterr()
+        assert "[Concurrency Gate] Active tasks count reaches max limit" in captured.out
+
+        # TASK-2 should still be pending
+        assert worker.tasks[1]["status"] == "pending"
+
+        # start_task_session should not have been called for TASK-2
+        mock_start.assert_not_called()
+
+        # update_task_session_status should have been called for TASK-1
+        mock_update.assert_called_once()
+
+
 def test_session_reconciliation_rule1(sample_tasks):
     mock_jules = MagicMock()
     mock_jules.list_sessions.return_value = [

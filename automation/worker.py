@@ -1099,13 +1099,23 @@ class AutomationWorker:
         self.reconcile_sessions()
 
         # Step 2: Process tasks with exception isolation (RSI Item 2)
+        active_statuses = {"in_progress", "waiting_for_ci", "waiting_for_review"}
+        active_tasks_count = sum(1 for t in self.tasks if t.get("status") in active_statuses)
+        max_active_tasks = self.config.get("max_active_tasks", 1)
+
         for task in self.tasks:
             try:
                 status = task.get("status")
 
                 if status == "pending":
                     if self.is_dependency_satisfied(task):
+                        if active_tasks_count >= max_active_tasks:
+                            print("[Concurrency Gate] Active tasks count reaches max limit")
+                            continue
+
                         self.start_task_session(task)
+                        if task.get("status") == "in_progress":
+                            active_tasks_count += 1
                     else:
                         print(f"[Skipped] Task {task['id']} dependencies not yet satisfied.")
 
