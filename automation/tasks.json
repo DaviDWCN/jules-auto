@@ -11,11 +11,12 @@
     ],
     "dependencies": [],
     "max_attempts": 3,
-    "status": "pending",
-    "active_session_id": null,
+    "status": "in_progress",
+    "active_session_id": "11324551738783952150",
     "pr_number": null,
     "pr_url": null,
-    "failure_history": []
+    "failure_history": [],
+    "session_started_at": "2026-10-12T13:51:11.146270+00:00"
   },
   {
     "id": "TASK-OPT-102",
@@ -149,12 +150,13 @@
     ],
     "dependencies": [],
     "max_attempts": 3,
-    "status": "pending",
-    "active_session_id": null,
+    "status": "in_progress",
+    "active_session_id": "7495091728806067452",
     "pr_number": null,
     "pr_url": null,
     "failure_history": [],
-    "is_auto_generated": true
+    "is_auto_generated": true,
+    "session_started_at": "2026-10-12T13:51:14.186343+00:00"
   },
   {
     "id": "TASK-AUTO-102",
@@ -167,11 +169,12 @@
     ],
     "dependencies": [],
     "max_attempts": 3,
-    "status": "pending",
-    "active_session_id": null,
+    "status": "in_progress",
+    "active_session_id": "13563647913328549568",
     "pr_number": null,
     "pr_url": null,
     "failure_history": [],
-    "is_auto_generated": true
+    "is_auto_generated": true,
+    "session_started_at": "2026-10-12T13:51:16.933949+00:00"
   }
 ]
