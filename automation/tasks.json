@@ -1,22 +1,23 @@
 [
   {
     "id": "TASK-OPT-100",
-    "title": "修复自动合并门禁与直接合入兜底 (Fix Auto-Merge Gates & Direct Merge Fallback)",
-    "description": "在 automation/worker.py 中修复 GitHub PR 自动合并门禁与直接合并兜底逻辑，解决无人值守自动化场景下 PR 无法自动合并的问题：\n1. 支持免人审自愈模式（Review Gate Optimization）：\n   - 在 automation/config.json 中支持配置 require_review（默认值为 false）。\n   - 在 GitHubClient.get_pr_review_status(pr_number) 中：如果 reviews 为空列表，且未配置强制人审（require_review 为 false），应返回 'approved' 而不是 'pending'；只有在 reviews 中存在明确的 'CHANGES_REQUESTED' 时才判定为 'changes_requested'。\n2. 增加直接合并降级（Direct Merge Fallback）：\n   - 当目标分支未配置保护规则且 PR 处于 clean 可合入状态时，GitHub GraphQL enablePullRequestAutoMerge 会返回错误 'Pull request Pull request is in clean status'。\n   - 在 GitHubClient 中实现 direct_merge_pr(pr_number: int, merge_method: str = 'squash') -> bool 方法，调用 GitHub REST API: PUT /repos/{repository}/pulls/{pr_number}/merge，携带 json={'merge_method': merge_method}。\n   - 在 enable_auto_merge(pr_number) 中：若 gh CLI 与 GraphQL Auto-Merge 未成功或抛出异常，自动降级调用 direct_merge_pr() 直接完成合并。\n3. 单元测试与健全性保障：\n   - 在 tests/test_worker.py 中增加单元测试：\n     a) test_get_pr_review_status_defaults_approved_when_no_reviews_and_not_required：验证无 review 时默认 approved。\n     b) test_direct_merge_fallback_on_clean_status：验证当 auto-merge 不适用时降级直接合并。\n   - 确保 pytest 全部测试 100% 通过无报错。",
+    "title": "\u4fee\u590d\u81ea\u52a8\u5408\u5e76\u95e8\u7981\u4e0e\u76f4\u63a5\u5408\u5165\u515c\u5e95 (Fix Auto-Merge Gates & Direct Merge Fallback)",
+    "description": "\u5728 automation/worker.py \u4e2d\u4fee\u590d GitHub PR \u81ea\u52a8\u5408\u5e76\u95e8\u7981\u4e0e\u76f4\u63a5\u5408\u5e76\u515c\u5e95\u903b\u8f91\uff0c\u89e3\u51b3\u65e0\u4eba\u503c\u5b88\u81ea\u52a8\u5316\u573a\u666f\u4e0b PR \u65e0\u6cd5\u81ea\u52a8\u5408\u5e76\u7684\u95ee\u9898\uff1a\n1. \u652f\u6301\u514d\u4eba\u5ba1\u81ea\u6108\u6a21\u5f0f\uff08Review Gate Optimization\uff09\uff1a\n   - \u5728 automation/config.json \u4e2d\u652f\u6301\u914d\u7f6e require_review\uff08\u9ed8\u8ba4\u503c\u4e3a false\uff09\u3002\n   - \u5728 GitHubClient.get_pr_review_status(pr_number) \u4e2d\uff1a\u5982\u679c reviews \u4e3a\u7a7a\u5217\u8868\uff0c\u4e14\u672a\u914d\u7f6e\u5f3a\u5236\u4eba\u5ba1\uff08require_review \u4e3a false\uff09\uff0c\u5e94\u8fd4\u56de 'approved' \u800c\u4e0d\u662f 'pending'\uff1b\u53ea\u6709\u5728 reviews \u4e2d\u5b58\u5728\u660e\u786e\u7684 'CHANGES_REQUESTED' \u65f6\u624d\u5224\u5b9a\u4e3a 'changes_requested'\u3002\n2. \u589e\u52a0\u76f4\u63a5\u5408\u5e76\u964d\u7ea7\uff08Direct Merge Fallback\uff09\uff1a\n   - \u5f53\u76ee\u6807\u5206\u652f\u672a\u914d\u7f6e\u4fdd\u62a4\u89c4\u5219\u4e14 PR \u5904\u4e8e clean \u53ef\u5408\u5165\u72b6\u6001\u65f6\uff0cGitHub GraphQL enablePullRequestAutoMerge \u4f1a\u8fd4\u56de\u9519\u8bef 'Pull request Pull request is in clean status'\u3002\n   - \u5728 GitHubClient \u4e2d\u5b9e\u73b0 direct_merge_pr(pr_number: int, merge_method: str = 'squash') -> bool \u65b9\u6cd5\uff0c\u8c03\u7528 GitHub REST API: PUT /repos/{repository}/pulls/{pr_number}/merge\uff0c\u643a\u5e26 json={'merge_method': merge_method}\u3002\n   - \u5728 enable_auto_merge(pr_number) \u4e2d\uff1a\u82e5 gh CLI \u4e0e GraphQL Auto-Merge \u672a\u6210\u529f\u6216\u629b\u51fa\u5f02\u5e38\uff0c\u81ea\u52a8\u964d\u7ea7\u8c03\u7528 direct_merge_pr() \u76f4\u63a5\u5b8c\u6210\u5408\u5e76\u3002\n3. \u5355\u5143\u6d4b\u8bd5\u4e0e\u5065\u5168\u6027\u4fdd\u969c\uff1a\n   - \u5728 tests/test_worker.py \u4e2d\u589e\u52a0\u5355\u5143\u6d4b\u8bd5\uff1a\n     a) test_get_pr_review_status_defaults_approved_when_no_reviews_and_not_required\uff1a\u9a8c\u8bc1\u65e0 review \u65f6\u9ed8\u8ba4 approved\u3002\n     b) test_direct_merge_fallback_on_clean_status\uff1a\u9a8c\u8bc1\u5f53 auto-merge \u4e0d\u9002\u7528\u65f6\u964d\u7ea7\u76f4\u63a5\u5408\u5e76\u3002\n   - \u786e\u4fdd pytest \u5168\u90e8\u6d4b\u8bd5 100% \u901a\u8fc7\u65e0\u62a5\u9519\u3002",
     "acceptance_criteria": [
-      "automation/config.json 包含 require_review: false 配置项",
-      "get_pr_review_status 在 require_review 为 false 且无 review 记录时返回 approved，不再因空 review 列表而阻塞",
-      "GitHubClient 实现 direct_merge_pr 并在 enable_auto_merge 中作为降级策略",
-      "在 tests/test_worker.py 中补充单元测试覆盖",
-      "pytest 全部通过无报错"
+      "automation/config.json \u5305\u542b require_review: false \u914d\u7f6e\u9879",
+      "get_pr_review_status \u5728 require_review \u4e3a false \u4e14\u65e0 review \u8bb0\u5f55\u65f6\u8fd4\u56de approved\uff0c\u4e0d\u518d\u56e0\u7a7a review \u5217\u8868\u800c\u963b\u585e",
+      "GitHubClient \u5b9e\u73b0 direct_merge_pr \u5e76\u5728 enable_auto_merge \u4e2d\u4f5c\u4e3a\u964d\u7ea7\u7b56\u7565",
+      "\u5728 tests/test_worker.py \u4e2d\u8865\u5145\u5355\u5143\u6d4b\u8bd5\u8986\u76d6",
+      "pytest \u5168\u90e8\u901a\u8fc7\u65e0\u62a5\u9519"
     ],
     "dependencies": [],
     "max_attempts": 3,
-    "status": "pending",
-    "active_session_id": null,
+    "status": "in_progress",
+    "active_session_id": "14047542614579048960",
     "pr_number": null,
     "pr_url": null,
-    "failure_history": []
+    "failure_history": [],
+    "session_started_at": "2026-10-12T14:12:24.493468+00:00"
   },
   {
     "id": "TASK-OPT-101",
