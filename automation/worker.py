@@ -199,7 +199,9 @@ class GitHubClient:
             error_details = ""
             for run in check_runs:
                 if run.get("conclusion") in ["failure", "timed_out", "cancelled"]:
-                    output = run.get("output") or {}
+                    output = run.get("output")
+                    if not isinstance(output, dict):
+                        output = {}
                     title = output.get("title", "")
                     summary = output.get("summary", "")
                     text = output.get("text", "")
