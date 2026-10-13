@@ -76,7 +76,8 @@ def test_concurrency_gate_max_active_tasks(sample_tasks, capsys):
 
         # Output should mention the concurrency gate
         captured = capsys.readouterr()
-        assert "[Concurrency Gate] Active tasks count reaches max limit" in captured.out
+        assert "[Concurrency Gate] Active tasks count" in captured.out
+        assert "reaches max limit" in captured.out
 
         # TASK-2 should still be pending
         assert worker.tasks[1]["status"] == "pending"
@@ -629,3 +630,66 @@ def test_direct_merge_fallback_on_clean_status():
             args, kwargs = mock_put.call_args
             assert "merge" in args[0]
             assert kwargs["json"]["merge_method"] == "squash"
+
+
+def test_active_polling_loop_exits_on_no_active_tasks(sample_tasks):
+    worker = AutomationWorker(tasks_file=sample_tasks)
+
+    # Enable polling and set tiny intervals to avoid slow tests
+    worker.config["enable_active_polling"] = True
+    worker.config["poll_interval_seconds"] = 1
+    worker.config["max_poll_minutes"] = 10
+
+    # Task 1 is pending, Task 2 is pending.
+    # When we run_cycle, Task 1 becomes in_progress (if API mocked, but here it will just process and we mock run_cycle)
+
+    with patch.object(worker, "run_cycle") as mock_run_cycle, \
+         patch("time.sleep") as mock_sleep:
+
+        def side_effect():
+            # First time called, we simulate task 1 is in progress
+            if mock_run_cycle.call_count == 1:
+                worker.tasks[0]["status"] = "in_progress"
+            # Second time called, we simulate task 1 is done
+            elif mock_run_cycle.call_count == 2:
+                worker.tasks[0]["status"] = "done"
+
+        mock_run_cycle.side_effect = side_effect
+
+        worker.run_polling_loop()
+
+        # Should have called run_cycle twice
+        assert mock_run_cycle.call_count == 2
+        # Should have slept once
+        assert mock_sleep.call_count == 1
+
+
+def test_active_polling_loop_exits_on_timeout(sample_tasks):
+    worker = AutomationWorker(tasks_file=sample_tasks)
+    worker.config["enable_active_polling"] = True
+    worker.config["poll_interval_seconds"] = 1
+    worker.config["max_poll_minutes"] = 10
+
+    worker.tasks[0]["status"] = "in_progress"
+
+    with patch.object(worker, "run_cycle") as mock_run_cycle, \
+         patch("time.sleep") as mock_sleep, \
+         patch("automation.worker.datetime") as mock_datetime:
+
+        from datetime import datetime, timezone, timedelta
+
+        start_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+
+        # datetime.now will return start_time on 1st call, start_time + 11m on 2nd call
+        # but run_polling_loop calls now() once at start, then once per loop iteration
+        mock_datetime.now.side_effect = [
+            start_time, # initial
+            start_time + timedelta(minutes=5), # 1st loop iteration
+            start_time + timedelta(minutes=11) # 2nd loop iteration (should break)
+        ]
+
+        worker.run_polling_loop()
+
+        assert mock_run_cycle.call_count == 2
+        # Only sleeps when it doesn't break
+        assert mock_sleep.call_count == 1
