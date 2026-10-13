@@ -8,7 +8,7 @@
   "session_timeout_minutes": 60,
   "enable_active_polling": true,
   "poll_interval_seconds": 20,
-  "max_poll_minutes": 10,
+  "max_poll_minutes": 30,
   "enable_issue_alerts": true,
   "enable_memory": true,
   "max_memory_items": 20,
