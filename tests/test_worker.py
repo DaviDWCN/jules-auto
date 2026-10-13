@@ -39,8 +39,8 @@ def sample_tasks(tmp_path):
     return str(tasks_file)
 
 
-def test_dependency_checking(sample_tasks):
-    worker = AutomationWorker(tasks_file=sample_tasks)
+def test_dependency_checking(sample_tasks, tmp_path):
+    worker = AutomationWorker(tasks_file=sample_tasks, memory_file=str(tmp_path / "memory.json"))
 
     # TASK-1 has no dependencies
     assert worker.is_dependency_satisfied(worker.tasks[0]) is True
@@ -52,8 +52,8 @@ def test_dependency_checking(sample_tasks):
     assert worker.is_dependency_satisfied(worker.tasks[1]) is True
 
 
-def test_concurrency_gate_max_active_tasks(sample_tasks, capsys):
-    worker = AutomationWorker(tasks_file=sample_tasks)
+def test_concurrency_gate_max_active_tasks(sample_tasks, capsys, tmp_path):
+    worker = AutomationWorker(tasks_file=sample_tasks, memory_file=str(tmp_path / "memory.json"))
     # Set config to max 1 active task
     worker.config["max_active_tasks"] = 1
 
@@ -89,13 +89,13 @@ def test_concurrency_gate_max_active_tasks(sample_tasks, capsys):
         mock_update.assert_called_once()
 
 
-def test_session_reconciliation_rule1(sample_tasks):
+def test_session_reconciliation_rule1(sample_tasks, tmp_path):
     mock_jules = MagicMock()
     mock_jules.list_sessions.return_value = [
         {"id": "session-123", "title": "[TASK-1] First task", "state": "IN_PROGRESS"}
     ]
 
-    worker = AutomationWorker(tasks_file=sample_tasks, jules_client=mock_jules)
+    worker = AutomationWorker(tasks_file=sample_tasks, jules_client=mock_jules, memory_file=str(tmp_path / "memory.json"))
     worker.reconcile_sessions()
 
     # TASK-1 should now be re-linked to session-123 and status set to in_progress
@@ -103,13 +103,13 @@ def test_session_reconciliation_rule1(sample_tasks):
     assert worker.tasks[0]["status"] == "in_progress"
 
 
-def test_session_reconciliation_ignores_failed_history(sample_tasks):
+def test_session_reconciliation_ignores_failed_history(sample_tasks, tmp_path):
     mock_jules = MagicMock()
     mock_jules.list_sessions.return_value = [
         {"id": "session-failed-1", "title": "[TASK-1] First task", "state": "FAILED"}
     ]
 
-    worker = AutomationWorker(tasks_file=sample_tasks, jules_client=mock_jules)
+    worker = AutomationWorker(tasks_file=sample_tasks, jules_client=mock_jules, memory_file=str(tmp_path / "memory.json"))
     task = worker.tasks[0]
     task["failure_history"] = [{"session_id": "session-failed-1", "reason": "Failed run"}]
     task["status"] = "pending"
@@ -121,14 +121,14 @@ def test_session_reconciliation_ignores_failed_history(sample_tasks):
     assert task["status"] == "pending"
 
 
-def test_session_reconciliation_ambiguous_conflict(sample_tasks):
+def test_session_reconciliation_ambiguous_conflict(sample_tasks, tmp_path):
     mock_jules = MagicMock()
     mock_jules.list_sessions.return_value = [
         {"id": "session-123", "title": "[TASK-1] First task", "state": "IN_PROGRESS"},
         {"id": "session-456", "title": "[TASK-1] First task (retry)", "state": "IN_PROGRESS"}
     ]
 
-    worker = AutomationWorker(tasks_file=sample_tasks, jules_client=mock_jules)
+    worker = AutomationWorker(tasks_file=sample_tasks, jules_client=mock_jules, memory_file=str(tmp_path / "memory.json"))
     worker.reconcile_sessions()
 
     # Ambiguous active sessions set task status to blocked
@@ -136,8 +136,8 @@ def test_session_reconciliation_ambiguous_conflict(sample_tasks):
     assert "Ambiguous" in worker.tasks[0]["blocked_reason"]
 
 
-def test_retry_prompt_history_rule2(sample_tasks):
-    worker = AutomationWorker(tasks_file=sample_tasks)
+def test_retry_prompt_history_rule2(sample_tasks, tmp_path):
+    worker = AutomationWorker(tasks_file=sample_tasks, memory_file=str(tmp_path / "memory.json"))
     task = worker.tasks[0]
     task["failure_history"] = [
         {"session_id": "sess-old", "reason": "Syntax error in src/app.py", "timestamp": "2025-01-01T00:00:00Z"}
@@ -149,11 +149,11 @@ def test_retry_prompt_history_rule2(sample_tasks):
     assert "sess-old" in prompt
 
 
-def test_blocked_task_creates_github_issue(sample_tasks):
+def test_blocked_task_creates_github_issue(sample_tasks, tmp_path):
     mock_github = MagicMock()
     mock_github.create_issue.return_value = {"html_url": "https://github.com/org/repo/issues/42"}
 
-    worker = AutomationWorker(tasks_file=sample_tasks, github_client=mock_github)
+    worker = AutomationWorker(tasks_file=sample_tasks, github_client=mock_github, memory_file=str(tmp_path / "memory.json"))
     worker.config["enable_issue_alerts"] = True
 
     task = worker.tasks[0]
@@ -190,8 +190,8 @@ def test_blocked_task_creates_github_issue(sample_tasks):
     assert mock_github.create_issue.call_count == 1
 
 
-def test_record_task_failure_rule2(sample_tasks):
-    worker = AutomationWorker(tasks_file=sample_tasks)
+def test_record_task_failure_rule2(sample_tasks, tmp_path):
+    worker = AutomationWorker(tasks_file=sample_tasks, memory_file=str(tmp_path / "memory.json"))
     task = worker.tasks[0]
     task["active_session_id"] = "sess-failed"
 
@@ -211,12 +211,12 @@ def test_record_task_failure_rule2(sample_tasks):
     assert task["status"] == "blocked"
 
 
-def test_check_pr_merge_gates_pending_ci_rule3(sample_tasks):
+def test_check_pr_merge_gates_pending_ci_rule3(sample_tasks, tmp_path):
     mock_github = MagicMock()
     mock_github.get_pr.return_value = {"merged": False, "state": "open", "head": {"sha": "abc"}}
     mock_github.get_pr_checks.return_value = {"status": "pending"}
 
-    worker = AutomationWorker(tasks_file=sample_tasks, github_client=mock_github)
+    worker = AutomationWorker(tasks_file=sample_tasks, github_client=mock_github, memory_file=str(tmp_path / "memory.json"))
     task = worker.tasks[0]
     task["pr_number"] = 42
     task["status"] = "waiting_for_ci"
@@ -227,12 +227,12 @@ def test_check_pr_merge_gates_pending_ci_rule3(sample_tasks):
     assert task["status"] == "waiting_for_ci"
 
 
-def test_check_pr_merge_gates_ci_failed_rule3(sample_tasks):
+def test_check_pr_merge_gates_ci_failed_rule3(sample_tasks, tmp_path):
     mock_github = MagicMock()
     mock_github.get_pr.return_value = {"merged": False, "state": "open", "head": {"sha": "abc"}}
     mock_github.get_pr_checks.return_value = {"status": "failure"}
 
-    worker = AutomationWorker(tasks_file=sample_tasks, github_client=mock_github)
+    worker = AutomationWorker(tasks_file=sample_tasks, github_client=mock_github, memory_file=str(tmp_path / "memory.json"))
     task = worker.tasks[0]
     task["pr_number"] = 42
 
@@ -243,11 +243,11 @@ def test_check_pr_merge_gates_ci_failed_rule3(sample_tasks):
     assert "CI checks failed" in task["failure_history"][0]["reason"]
 
 
-def test_check_pr_merge_gates_merged_done(sample_tasks):
+def test_check_pr_merge_gates_merged_done(sample_tasks, tmp_path):
     mock_github = MagicMock()
     mock_github.get_pr.return_value = {"merged": True, "state": "closed"}
 
-    worker = AutomationWorker(tasks_file=sample_tasks, github_client=mock_github)
+    worker = AutomationWorker(tasks_file=sample_tasks, github_client=mock_github, memory_file=str(tmp_path / "memory.json"))
     task = worker.tasks[0]
     task["pr_number"] = 42
 
@@ -413,7 +413,8 @@ def test_worker_run_cycle_level2_and_level3_integration(sample_tasks, tmp_path):
         tasks_file=sample_tasks,
         architect_auditor=mock_auditor,
         guideline_optimizer=mock_optimizer
-    )
+    ,
+        memory_file=str(tmp_path / "memory.json"))
     worker.config["enable_backlog_expansion"] = True
     worker.config["enable_guideline_optimization"] = True
 
@@ -424,10 +425,10 @@ def test_worker_run_cycle_level2_and_level3_integration(sample_tasks, tmp_path):
     assert any(t["id"] == "TASK-AUTO-999" for t in worker.tasks)
 
 
-def test_session_timeout_watchdog(sample_tasks):
+def test_session_timeout_watchdog(sample_tasks, tmp_path):
     from datetime import datetime, timezone, timedelta
 
-    worker = AutomationWorker(tasks_file=sample_tasks)
+    worker = AutomationWorker(tasks_file=sample_tasks, memory_file=str(tmp_path / "memory.json"))
     worker.config["session_timeout_minutes"] = 30
 
     task = worker.tasks[0]
@@ -537,8 +538,8 @@ def test_memory_manager_get_relevant_lessons(tmp_path):
     assert relevant[0]["task_id"] == "TASK-101"
 
 
-def test_worker_run_cycle_exception_isolation(sample_tasks):
-    worker = AutomationWorker(tasks_file=sample_tasks)
+def test_worker_run_cycle_exception_isolation(sample_tasks, tmp_path):
+    worker = AutomationWorker(tasks_file=sample_tasks, memory_file=str(tmp_path / "memory.json"))
 
     # Task 1 raises error during processing
     with patch.object(worker, "start_task_session", side_effect=RuntimeError("Simulated API failure")):
@@ -573,7 +574,7 @@ def test_worker_rsi_metrics_and_report_generation(sample_tasks, tmp_path):
     assert "Completion Rate: 50.0%" in report
 
 
-def test_jules_client_create_session_payload():
+def test_jules_client_create_session_payload(tmp_path):
     with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
         mock_get.return_value.status_code = 200
         mock_get.return_value.json.return_value = {
@@ -603,7 +604,7 @@ def test_jules_client_create_session_payload():
         assert payload["sourceContext"]["githubRepoContext"]["startingBranch"] == "main"
 
 
-def test_jules_session_outputs_array_parsing(sample_tasks):
+def test_jules_session_outputs_array_parsing(sample_tasks, tmp_path):
     mock_jules = MagicMock()
     mock_jules.get_session.return_value = {
         "id": "sess-999",
@@ -618,7 +619,7 @@ def test_jules_session_outputs_array_parsing(sample_tasks):
         ]
     }
 
-    worker = AutomationWorker(tasks_file=sample_tasks, jules_client=mock_jules)
+    worker = AutomationWorker(tasks_file=sample_tasks, jules_client=mock_jules, memory_file=str(tmp_path / "memory.json"))
     task = worker.tasks[0]
     task["status"] = "in_progress"
     task["active_session_id"] = "sess-999"
@@ -631,7 +632,7 @@ def test_jules_session_outputs_array_parsing(sample_tasks):
 
 
 
-def test_get_pr_review_status_defaults_approved_when_no_reviews_and_not_required():
+def test_get_pr_review_status_defaults_approved_when_no_reviews_and_not_required(tmp_path):
     from automation.worker import GitHubClient
     with patch("requests.get") as mock_get:
         mock_get.return_value.status_code = 200
@@ -645,7 +646,7 @@ def test_get_pr_review_status_defaults_approved_when_no_reviews_and_not_required
         # When require_review is True and reviews is empty, it should be pending
         assert client.get_pr_review_status(1, require_review=True) == "pending"
 
-def test_direct_merge_fallback_on_clean_status():
+def test_direct_merge_fallback_on_clean_status(tmp_path):
     from automation.worker import GitHubClient
     with patch("subprocess.run") as mock_run, \
          patch("requests.post") as mock_post, \
@@ -673,8 +674,8 @@ def test_direct_merge_fallback_on_clean_status():
             assert kwargs["json"]["merge_method"] == "squash"
 
 
-def test_active_polling_loop(sample_tasks):
-    worker = AutomationWorker(tasks_file=sample_tasks)
+def test_active_polling_loop(sample_tasks, tmp_path):
+    worker = AutomationWorker(tasks_file=sample_tasks, memory_file=str(tmp_path / "memory.json"))
     worker.config["enable_active_polling"] = True
     worker.config["poll_interval_seconds"] = 1
     worker.config["max_poll_minutes"] = 1 # We'll mock time anyway
@@ -709,8 +710,8 @@ def test_active_polling_loop(sample_tasks):
         assert mock_sleep.call_count == 2
         mock_sleep.assert_called_with(1)
 
-def test_active_polling_loop_timeout(sample_tasks):
-    worker = AutomationWorker(tasks_file=sample_tasks)
+def test_active_polling_loop_timeout(sample_tasks, tmp_path):
+    worker = AutomationWorker(tasks_file=sample_tasks, memory_file=str(tmp_path / "memory.json"))
     worker.config["enable_active_polling"] = True
     worker.config["poll_interval_seconds"] = 1
     worker.config["max_poll_minutes"] = 1
@@ -734,8 +735,8 @@ def test_active_polling_loop_timeout(sample_tasks):
         assert mock_sleep.call_count == 1
         assert task["status"] == "in_progress" # Verify it exited due to timeout, not task completion
 
-def test_active_polling_loop_disabled(sample_tasks):
-    worker = AutomationWorker(tasks_file=sample_tasks)
+def test_active_polling_loop_disabled(sample_tasks, tmp_path):
+    worker = AutomationWorker(tasks_file=sample_tasks, memory_file=str(tmp_path / "memory.json"))
     worker.config["enable_active_polling"] = False
 
     task = worker.tasks[0]
@@ -746,8 +747,8 @@ def test_active_polling_loop_disabled(sample_tasks):
         assert mock_cycle.call_count == 1
 
 
-def test_ci_failure_traceback_extraction_and_prompt_injection(sample_tasks):
-    worker = AutomationWorker(tasks_file=sample_tasks)
+def test_ci_failure_traceback_extraction_and_prompt_injection(sample_tasks, tmp_path):
+    worker = AutomationWorker(tasks_file=sample_tasks, memory_file=str(tmp_path / "memory.json"))
     task = worker.tasks[0]
     task["status"] = "waiting_for_ci"
     task["pr_number"] = 100
@@ -803,7 +804,7 @@ def test_ci_failure_traceback_extraction_and_prompt_injection(sample_tasks):
     assert "traceback goes here" in prompt
 
 def test_write_github_step_summary(sample_tasks, tmp_path, monkeypatch):
-    worker = AutomationWorker(tasks_file=sample_tasks)
+    worker = AutomationWorker(tasks_file=sample_tasks, memory_file=str(tmp_path / "memory.json"))
 
     # Setup some test data
     worker.tasks[0]["status"] = "done"
