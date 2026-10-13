@@ -213,7 +213,7 @@ class GitHubClient:
 
                     if details:
                         full_error = "\n".join(details)
-                        # Retain up to ~1000 characters, prioritizing the end (traceback)
+                        # Retain up to ~1000 characters, prioritizing the end (traceback) for prompt injection
                         if len(full_error) > 1000:
                             error_details = f"...(truncated)...\n{full_error[-900:]}"
                         else:
