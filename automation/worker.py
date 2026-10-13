@@ -1169,6 +1169,47 @@ class AutomationWorker:
         print(self.generate_improvement_report())
         print("=== Automation Worker Cycle Complete ===")
 
+    def run_polling_loop(self):
+        """
+        Runs the orchestration lifecycle in a spin loop until all active tasks
+        complete or the maximum polling duration is reached.
+        """
+        if not self.config.get("enable_active_polling", True):
+            print("[Polling Loop] Active polling is disabled in config. Running single cycle instead.")
+            return self.run_cycle()
+
+        interval_seconds = self.config.get("poll_interval_seconds", 20)
+        max_minutes = self.config.get("max_poll_minutes", 10)
+        start_time = time.time()
+        max_seconds = max_minutes * 60
+
+        print(f"=== Starting Active Polling Loop (Max {max_minutes}m, Interval {interval_seconds}s) ===")
+
+        while True:
+            # 1. Execute single cycle to reconcile state and advance tasks
+            self.run_cycle()
+
+            # 2. Re-read active statuses after cycle runs (and possibly updates self.tasks)
+            active_statuses = {"in_progress", "waiting_for_ci", "waiting_for_review"}
+            active_count = sum(1 for t in self.tasks if t.get("status") in active_statuses)
+
+            # 3. Check for exit condition: no active tasks remaining
+            if active_count == 0:
+                print("[Polling Loop] No active tasks remaining. Exiting loop.")
+                break
+
+            # 4. Check for exit condition: max polling timeout
+            elapsed = time.time() - start_time
+            if elapsed >= max_seconds:
+                print(f"[Polling Loop] Maximum polling duration of {max_minutes} minutes reached. Exiting loop.")
+                break
+
+            # 5. Wait for the interval duration before checking again
+            print(f"[Polling Loop] Sleeping for {interval_seconds} seconds... (Elapsed: {elapsed:.1f}s / {max_seconds}s)")
+            time.sleep(interval_seconds)
+
+        print("=== Active Polling Loop Complete ===")
+
     def get_self_improvement_metrics(self) -> Dict[str, Any]:
         """
         RSI Feature Item 3: Computes system health and self-improvement telemetry.
@@ -1219,11 +1260,20 @@ class AutomationWorker:
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Jules Automation Worker")
+    parser.add_argument("--poll", action="store_true", help="Enable active polling loop")
+    args = parser.parse_args()
+
     tasks_file = os.getenv("TASKS_FILE", "automation/tasks.json")
     config_file = os.getenv("CONFIG_FILE", "automation/config.json")
     memory_file = os.getenv("MEMORY_FILE", "automation/memory.json")
     worker = AutomationWorker(tasks_file=tasks_file, config_file=config_file, memory_file=memory_file)
-    worker.run_cycle()
+
+    if args.poll:
+        worker.run_polling_loop()
+    else:
+        worker.run_cycle()
 
 
 if __name__ == "__main__":
