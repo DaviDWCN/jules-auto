@@ -75,11 +75,12 @@
       "TASK-OPT-101B"
     ],
     "max_attempts": 3,
-    "status": "pending",
-    "active_session_id": null,
+    "status": "in_progress",
+    "active_session_id": "8011615663159801904",
     "pr_number": null,
     "pr_url": null,
-    "failure_history": []
+    "failure_history": [],
+    "session_started_at": "2026-10-13T00:57:01.593871+00:00"
   },
   {
     "id": "TASK-OPT-103",
