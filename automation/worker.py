@@ -1258,6 +1258,43 @@ class AutomationWorker:
         ]
         return "\n".join(report_lines)
 
+    def run_polling_loop(self):
+        """
+        Runs an active polling loop instead of a single cycle.
+        Maintains loop until all active tasks are done/blocked or max_poll_minutes is reached.
+        """
+        enable_polling = self.config.get("enable_active_polling", True)
+        if not enable_polling:
+            print("[Polling] Active polling is disabled in config. Running single cycle instead.")
+            self.run_cycle()
+            return
+
+        poll_interval = self.config.get("poll_interval_seconds", 20)
+        max_poll_minutes = self.config.get("max_poll_minutes", 10)
+
+        start_time = datetime.now(timezone.utc)
+        print(f"=== Starting Active Polling Loop (Max {max_poll_minutes}m) ===")
+
+        while True:
+            self.run_cycle()
+
+            active_statuses = {"in_progress", "waiting_for_ci", "waiting_for_review"}
+            active_tasks = [t for t in self.tasks if t.get("status") in active_statuses]
+
+            if not active_tasks:
+                print("[Polling] No active tasks remaining. Exiting polling loop.")
+                break
+
+            elapsed_minutes = (datetime.now(timezone.utc) - start_time).total_seconds() / 60.0
+            if elapsed_minutes >= max_poll_minutes:
+                print(f"[Polling] Reached maximum polling duration ({max_poll_minutes}m). Exiting polling loop.")
+                break
+
+            print(f"[Polling] Waiting {poll_interval} seconds before next cycle (elapsed: {elapsed_minutes:.1f}m)...")
+            time.sleep(poll_interval)
+
+        print("=== Active Polling Loop Complete ===")
+
 
 def main():
     import argparse
