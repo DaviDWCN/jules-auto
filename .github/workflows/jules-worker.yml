@@ -50,7 +50,7 @@ jobs:
           GH_TOKEN: ${{ secrets.AUTOMATION_TOKEN || github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          python automation/worker.py
+          python automation/worker.py --poll
 
       - name: Commit updated backlog state
         run: |
