@@ -75,7 +75,7 @@
       "TASK-OPT-101B"
     ],
     "max_attempts": 3,
-    "status": "waiting_for_ci",
+    "status": "done",
     "active_session_id": "11649836303939174209",
     "pr_number": 11,
     "pr_url": "https://github.com/DaviDWCN/jules-auto/pull/11",
@@ -86,7 +86,7 @@
         "timestamp": "2026-10-13T02:50:27.084764+00:00"
       }
     ],
-    "session_started_at": "2026-10-13T02:50:30.606706+00:00"
+    "session_started_at": null
   },
   {
     "id": "TASK-OPT-103",
@@ -103,11 +103,12 @@
       "TASK-OPT-102"
     ],
     "max_attempts": 3,
-    "status": "pending",
-    "active_session_id": null,
+    "status": "in_progress",
+    "active_session_id": "2856424634455853417",
     "pr_number": null,
     "pr_url": null,
-    "failure_history": []
+    "failure_history": [],
+    "session_started_at": "2026-10-13T03:29:55.885413+00:00"
   },
   {
     "id": "TASK-OPT-104",
