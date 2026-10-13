@@ -770,6 +770,15 @@ def test_ci_failure_traceback_extraction_and_prompt_injection(sample_tasks):
                 "status": "completed",
                 "conclusion": "failure",
                 "output": {
+                    "title": None,
+                    "summary": None,
+                    "text": None
+                }
+            },
+            {
+                "status": "completed",
+                "conclusion": "failure",
+                "output": {
                     "title": "Pytest Failure",
                     "summary": "1 failed, 2 passed",
                     "text": "E       AssertionError: assert False\nE       traceback goes here"

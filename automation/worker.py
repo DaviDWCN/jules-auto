@@ -202,9 +202,9 @@ class GitHubClient:
                     output = run.get("output")
                     if not isinstance(output, dict):
                         output = {}
-                    title = output.get("title", "")
-                    summary = output.get("summary", "")
-                    text = output.get("text", "")
+                    title = output.get("title") or ""
+                    summary = output.get("summary") or ""
+                    text = output.get("text") or ""
 
                     details = []
                     if title: details.append(f"Title: {title}")
