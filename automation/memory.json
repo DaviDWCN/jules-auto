@@ -4,5 +4,11 @@
     "lesson": "Avoid recurring pitfall: Task was blocked after repeated failures: Final error.",
     "trigger_reason": "Final error",
     "timestamp": "2026-10-11T14:48:23.016902+00:00"
+  },
+  {
+    "task_id": "TASK-OPT-102",
+    "lesson": "Resolved prior issue: Session timed out after 113.4 minutes without completion. (fixed in TASK-OPT-102).",
+    "trigger_reason": "Session timed out after 113.4 minutes without completion.",
+    "timestamp": "2026-10-13T04:00:30.034246+00:00"
   }
 ]
