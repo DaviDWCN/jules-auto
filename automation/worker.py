@@ -181,7 +181,7 @@ class GitHubClient:
             error_details = ""
             for run in check_runs:
                 if run.get("conclusion") in ["failure", "timed_out", "cancelled"]:
-                    output = run.get("output", {})
+                    output = run.get("output") or {}
                     title = output.get("title", "")
                     summary = output.get("summary", "")
                     text = output.get("text", "")
@@ -195,7 +195,7 @@ class GitHubClient:
                         full_error = "\n".join(details)
                         # Retain up to ~1000 characters, prioritizing the end (traceback)
                         if len(full_error) > 1000:
-                            error_details = f"...(truncated)...\n{full_error[-950:]}"
+                            error_details = f"...(truncated)...\n{full_error[-900:]}"
                         else:
                             error_details = full_error
                     break
@@ -1093,9 +1093,9 @@ class AutomationWorker:
         ci_status = self.github_client.get_pr_checks(pr_number)
         status_name = ci_status.get("status")
 
-        if status_name == "pending":
+        if status_name in ["pending", "unknown"]:
             task["status"] = "waiting_for_ci"
-            print(f"[Waiting CI] Task {task['id']} PR #{pr_number} checks are pending.")
+            print(f"[Waiting CI] Task {task['id']} PR #{pr_number} checks are {status_name}.")
             return
 
         if status_name == "failure":
@@ -1149,6 +1149,7 @@ class AutomationWorker:
                     self.check_pr_and_merge_gates(task)
             except Exception as e:
                 print(f"[Error Handler] Exception encountered while processing task {task.get('id')}: {e}")
+                self.record_task_failure(task, task.get("active_session_id"), f"Unhandled Exception: {str(e)}")
 
         # Recompute active count after completions
         active_tasks_count = sum(1 for t in self.tasks if t.get("status") in active_statuses)
@@ -1170,6 +1171,7 @@ class AutomationWorker:
                     active_tasks_count += 1
             except Exception as e:
                 print(f"[Error Handler] Exception encountered while processing task {task.get('id')}: {e}")
+                self.record_task_failure(task, task.get("active_session_id"), f"Unhandled Exception: {str(e)}")
 
         # Step 3 (Level 3): Global Guideline Self-Optimization
         if self.config.get("enable_guideline_optimization", True) and self.guideline_optimizer:
