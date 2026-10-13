@@ -138,6 +138,24 @@ class GitHubClient:
             "Accept": "application/vnd.github.v3+json",
         }
 
+    def create_issue(self, title: str, body: str, labels: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+        """Creates a new issue in the GitHub repository."""
+        if not self.repository or not self.token:
+            return None
+        url = f"https://api.github.com/repos/{self.repository}/issues"
+        payload = {"title": title, "body": body}
+        if labels is not None:
+            payload["labels"] = labels
+        try:
+            response = requests.post(url, headers=self._get_headers(), json=payload, timeout=30)
+            if response.status_code == 201:
+                return response.json()
+            else:
+                print(f"[GitHub API Error] Failed to create issue: {response.status_code} {response.text}")
+        except Exception as e:
+            print(f"[GitHub API Error] Exception during create_issue: {e}")
+        return None
+
     def get_pr(self, pr_number: int) -> Optional[Dict[str, Any]]:
         """Fetch Pull Request status from GitHub API."""
         if not self.repository or not self.token:
@@ -1028,6 +1046,48 @@ class AutomationWorker:
                     lesson=f"Avoid recurring pitfall: Task was blocked after repeated failures: {reason[:100]}.",
                     trigger_reason=reason
                 )
+
+            # TASK-OPT-105: Human-in-the-Loop Issue Alerting
+            if self.config.get("enable_issue_alerts", True) and not task.get("alert_issue_url"):
+                title = f"[Blocked Task Alert] {task['id']}: {task.get('title', 'Unknown Task')}"
+                body_parts = [
+                    f"**Task ID:** {task['id']}",
+                    f"**Title:** {task.get('title')}",
+                    f"**Description:**\n{task.get('description', '')}",
+                    "",
+                    "**Acceptance Criteria:**"
+                ]
+                for ac in task.get("acceptance_criteria", []):
+                    body_parts.append(f"- {ac}")
+
+                body_parts.extend([
+                    "",
+                    "**Failure History & Diagnostics:**",
+                    f"Task exceeded max attempts ({limit}). See logs below:"
+                ])
+                for idx, fail in enumerate(failures, 1):
+                    body_parts.append(f"\n--- Attempt {idx} ---")
+                    body_parts.append(f"**Session:** {fail.get('session_id')}")
+                    body_parts.append(f"**Reason:**\n```\n{fail.get('reason')}\n```")
+
+                body_parts.extend([
+                    "",
+                    "**Suggested Actions:**",
+                    "- Review the failure reasons and tracebacks above.",
+                    "- Adjust `acceptance_criteria` or `description` if the requirements are ambiguous.",
+                    "- Check if additional guidelines are needed in `config.json`.",
+                    "- Once the issue is resolved or requirements updated, clear the failure history to unblock."
+                ])
+
+                body = "\n".join(body_parts)
+                issue = self.github_client.create_issue(
+                    title=title,
+                    body=body,
+                    labels=["automation-blocked", "bug"]
+                )
+                if issue and issue.get("html_url"):
+                    task["alert_issue_url"] = issue.get("html_url")
+                    print(f"[Alert Created] Issue for blocked task {task['id']} created at {task['alert_issue_url']}")
 
     def on_task_completed(self, task: Dict[str, Any]):
         """
