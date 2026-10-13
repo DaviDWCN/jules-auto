@@ -632,64 +632,74 @@ def test_direct_merge_fallback_on_clean_status():
             assert kwargs["json"]["merge_method"] == "squash"
 
 
-def test_active_polling_loop_exits_on_no_active_tasks(sample_tasks):
+def test_active_polling_loop(sample_tasks):
     worker = AutomationWorker(tasks_file=sample_tasks)
-
-    # Enable polling and set tiny intervals to avoid slow tests
     worker.config["enable_active_polling"] = True
     worker.config["poll_interval_seconds"] = 1
-    worker.config["max_poll_minutes"] = 10
+    worker.config["max_poll_minutes"] = 1 # We'll mock time anyway
 
-    # Task 1 is pending, Task 2 is pending.
-    # When we run_cycle, Task 1 becomes in_progress (if API mocked, but here it will just process and we mock run_cycle)
+    task = worker.tasks[0]
+    task["status"] = "in_progress"
 
-    with patch.object(worker, "run_cycle") as mock_run_cycle, \
-         patch("time.sleep") as mock_sleep:
+    # We use a mock to verify run_cycle is called multiple times and to simulate task completion
+    # so the loop eventually exits. We'll use a side effect that modifies the task status.
+    cycle_calls = []
 
-        def side_effect():
-            # First time called, we simulate task 1 is in progress
-            if mock_run_cycle.call_count == 1:
-                worker.tasks[0]["status"] = "in_progress"
-            # Second time called, we simulate task 1 is done
-            elif mock_run_cycle.call_count == 2:
-                worker.tasks[0]["status"] = "done"
+    def mock_run_cycle(*args, **kwargs):
+        cycle_calls.append(1)
+        if len(cycle_calls) >= 3:
+            # Simulate completion on 3rd cycle to exit the loop
+            task["status"] = "done"
 
-        mock_run_cycle.side_effect = side_effect
+    with patch.object(worker, "run_cycle", side_effect=mock_run_cycle) as mock_cycle, \
+         patch("time.sleep") as mock_sleep, \
+         patch("time.time") as mock_time:
+
+        # mock_time needs to return increasing values so elapsed works, but we exit before timeout
+        # in this test because status changes to "done".
+        time_values = [0, 1, 2, 3, 4, 5, 6]
+        mock_time.side_effect = lambda: time_values.pop(0)
+
+        worker.run_polling_loop()
+
+        # Should have called run_cycle 3 times before exiting due to no active tasks
+        assert mock_cycle.call_count == 3
+        # Should have slept 2 times
+        assert mock_sleep.call_count == 2
+        mock_sleep.assert_called_with(1)
+
+def test_active_polling_loop_timeout(sample_tasks):
+    worker = AutomationWorker(tasks_file=sample_tasks)
+    worker.config["enable_active_polling"] = True
+    worker.config["poll_interval_seconds"] = 1
+    worker.config["max_poll_minutes"] = 1
+
+    task = worker.tasks[0]
+    task["status"] = "in_progress"
+
+    with patch.object(worker, "run_cycle") as mock_cycle, \
+         patch("time.sleep") as mock_sleep, \
+         patch("time.time") as mock_time:
+
+        # max_poll_minutes = 1 -> 60 seconds
+        # time values simulating 0s, 30s, 60s, 61s...
+        time_values = [0, 30, 61, 62]
+        mock_time.side_effect = lambda: time_values.pop(0)
 
         worker.run_polling_loop()
 
         # Should have called run_cycle twice
-        assert mock_run_cycle.call_count == 2
-        # Should have slept once
+        assert mock_cycle.call_count == 2
         assert mock_sleep.call_count == 1
+        assert task["status"] == "in_progress" # Verify it exited due to timeout, not task completion
 
-
-def test_active_polling_loop_exits_on_timeout(sample_tasks):
+def test_active_polling_loop_disabled(sample_tasks):
     worker = AutomationWorker(tasks_file=sample_tasks)
-    worker.config["enable_active_polling"] = True
-    worker.config["poll_interval_seconds"] = 1
-    worker.config["max_poll_minutes"] = 10
+    worker.config["enable_active_polling"] = False
 
-    worker.tasks[0]["status"] = "in_progress"
+    task = worker.tasks[0]
+    task["status"] = "in_progress"
 
-    with patch.object(worker, "run_cycle") as mock_run_cycle, \
-         patch("time.sleep") as mock_sleep, \
-         patch("automation.worker.datetime") as mock_datetime:
-
-        from datetime import datetime, timezone, timedelta
-
-        start_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
-
-        # datetime.now will return start_time on 1st call, start_time + 11m on 2nd call
-        # but run_polling_loop calls now() once at start, then once per loop iteration
-        mock_datetime.now.side_effect = [
-            start_time, # initial
-            start_time + timedelta(minutes=5), # 1st loop iteration
-            start_time + timedelta(minutes=11) # 2nd loop iteration (should break)
-        ]
-
+    with patch.object(worker, "run_cycle") as mock_cycle:
         worker.run_polling_loop()
-
-        assert mock_run_cycle.call_count == 2
-        # Only sleeps when it doesn't break
-        assert mock_sleep.call_count == 1
+        assert mock_cycle.call_count == 1
