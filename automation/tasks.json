@@ -75,10 +75,10 @@
       "TASK-OPT-101B"
     ],
     "max_attempts": 3,
-    "status": "in_progress",
+    "status": "waiting_for_ci",
     "active_session_id": "11649836303939174209",
-    "pr_number": null,
-    "pr_url": null,
+    "pr_number": 11,
+    "pr_url": "https://github.com/DaviDWCN/jules-auto/pull/11",
     "failure_history": [
       {
         "session_id": "8011615663159801904",
