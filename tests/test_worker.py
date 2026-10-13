@@ -76,7 +76,8 @@ def test_concurrency_gate_max_active_tasks(sample_tasks, capsys):
 
         # Output should mention the concurrency gate
         captured = capsys.readouterr()
-        assert "[Concurrency Gate] Active tasks count reaches max limit" in captured.out
+        assert "[Concurrency Gate] Active tasks count" in captured.out
+        assert "reaches max limit" in captured.out
 
         # TASK-2 should still be pending
         assert worker.tasks[1]["status"] == "pending"
@@ -629,3 +630,76 @@ def test_direct_merge_fallback_on_clean_status():
             args, kwargs = mock_put.call_args
             assert "merge" in args[0]
             assert kwargs["json"]["merge_method"] == "squash"
+
+
+def test_active_polling_loop(sample_tasks):
+    worker = AutomationWorker(tasks_file=sample_tasks)
+    worker.config["enable_active_polling"] = True
+    worker.config["poll_interval_seconds"] = 1
+    worker.config["max_poll_minutes"] = 1 # We'll mock time anyway
+
+    task = worker.tasks[0]
+    task["status"] = "in_progress"
+
+    # We use a mock to verify run_cycle is called multiple times and to simulate task completion
+    # so the loop eventually exits. We'll use a side effect that modifies the task status.
+    cycle_calls = []
+
+    def mock_run_cycle(*args, **kwargs):
+        cycle_calls.append(1)
+        if len(cycle_calls) >= 3:
+            # Simulate completion on 3rd cycle to exit the loop
+            task["status"] = "done"
+
+    with patch.object(worker, "run_cycle", side_effect=mock_run_cycle) as mock_cycle, \
+         patch("time.sleep") as mock_sleep, \
+         patch("time.time") as mock_time:
+
+        # mock_time needs to return increasing values so elapsed works, but we exit before timeout
+        # in this test because status changes to "done".
+        time_values = [0, 1, 2, 3, 4, 5, 6]
+        mock_time.side_effect = lambda: time_values.pop(0)
+
+        worker.run_polling_loop()
+
+        # Should have called run_cycle 3 times before exiting due to no active tasks
+        assert mock_cycle.call_count == 3
+        # Should have slept 2 times
+        assert mock_sleep.call_count == 2
+        mock_sleep.assert_called_with(1)
+
+def test_active_polling_loop_timeout(sample_tasks):
+    worker = AutomationWorker(tasks_file=sample_tasks)
+    worker.config["enable_active_polling"] = True
+    worker.config["poll_interval_seconds"] = 1
+    worker.config["max_poll_minutes"] = 1
+
+    task = worker.tasks[0]
+    task["status"] = "in_progress"
+
+    with patch.object(worker, "run_cycle") as mock_cycle, \
+         patch("time.sleep") as mock_sleep, \
+         patch("time.time") as mock_time:
+
+        # max_poll_minutes = 1 -> 60 seconds
+        # time values simulating 0s, 30s, 60s, 61s...
+        time_values = [0, 30, 61, 62]
+        mock_time.side_effect = lambda: time_values.pop(0)
+
+        worker.run_polling_loop()
+
+        # Should have called run_cycle twice
+        assert mock_cycle.call_count == 2
+        assert mock_sleep.call_count == 1
+        assert task["status"] == "in_progress" # Verify it exited due to timeout, not task completion
+
+def test_active_polling_loop_disabled(sample_tasks):
+    worker = AutomationWorker(tasks_file=sample_tasks)
+    worker.config["enable_active_polling"] = False
+
+    task = worker.tasks[0]
+    task["status"] = "in_progress"
+
+    with patch.object(worker, "run_cycle") as mock_cycle:
+        worker.run_polling_loop()
+        assert mock_cycle.call_count == 1
