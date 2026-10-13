@@ -76,11 +76,17 @@
     ],
     "max_attempts": 3,
     "status": "in_progress",
-    "active_session_id": "8011615663159801904",
+    "active_session_id": "11649836303939174209",
     "pr_number": null,
     "pr_url": null,
-    "failure_history": [],
-    "session_started_at": "2026-10-13T00:57:01.593871+00:00"
+    "failure_history": [
+      {
+        "session_id": "8011615663159801904",
+        "reason": "Session timed out after 113.4 minutes without completion.",
+        "timestamp": "2026-10-13T02:50:27.084764+00:00"
+      }
+    ],
+    "session_started_at": "2026-10-13T02:50:30.606706+00:00"
   },
   {
     "id": "TASK-OPT-103",
