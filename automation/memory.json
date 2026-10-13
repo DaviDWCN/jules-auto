@@ -10,5 +10,17 @@
     "lesson": "Resolved prior issue: Session timed out after 113.4 minutes without completion. (fixed in TASK-OPT-102).",
     "trigger_reason": "Session timed out after 113.4 minutes without completion.",
     "timestamp": "2026-10-13T03:29:52.835001+00:00"
+  },
+  {
+    "task_id": "TASK-1",
+    "lesson": "Avoid recurring pitfall: Task was blocked after repeated failures: Error 2.",
+    "trigger_reason": "Error 2",
+    "timestamp": "2026-10-13T11:14:21.594237+00:00"
+  },
+  {
+    "task_id": "TASK-1",
+    "lesson": "Avoid recurring pitfall: Task was blocked after repeated failures: Error 3.",
+    "trigger_reason": "Error 3",
+    "timestamp": "2026-10-13T11:14:21.594611+00:00"
   }
 ]

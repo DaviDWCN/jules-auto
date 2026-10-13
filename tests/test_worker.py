@@ -149,6 +149,47 @@ def test_retry_prompt_history_rule2(sample_tasks):
     assert "sess-old" in prompt
 
 
+def test_blocked_task_creates_github_issue(sample_tasks):
+    mock_github = MagicMock()
+    mock_github.create_issue.return_value = {"html_url": "https://github.com/org/repo/issues/42"}
+
+    worker = AutomationWorker(tasks_file=sample_tasks, github_client=mock_github)
+    worker.config["enable_issue_alerts"] = True
+
+    task = worker.tasks[0]
+    task["max_attempts"] = 2
+    task["description"] = "Test description"
+    task["acceptance_criteria"] = ["Criteria 1"]
+
+    # Simulate first failure
+    worker.record_task_failure(task, "sess-1", "Error 1")
+    assert task["status"] == "pending"
+    assert mock_github.create_issue.call_count == 0
+    assert "alert_issue_url" not in task
+
+    # Simulate second (final) failure
+    worker.record_task_failure(task, "sess-2", "Error 2")
+
+    assert task["status"] == "blocked"
+    mock_github.create_issue.assert_called_once()
+
+    call_args, call_kwargs = mock_github.create_issue.call_args
+    assert call_kwargs["title"] == f"[Blocked Task Alert] {task['id']}: {task['title']}"
+    assert "Error 1" in call_kwargs["body"]
+    assert "Error 2" in call_kwargs["body"]
+    assert "Test description" in call_kwargs["body"]
+    assert "Criteria 1" in call_kwargs["body"]
+    assert call_kwargs["labels"] == ["automation-blocked", "bug"]
+
+    assert task["alert_issue_url"] == "https://github.com/org/repo/issues/42"
+
+    # Simulate another failure call when alert_issue_url is already set
+    worker.record_task_failure(task, "sess-3", "Error 3")
+    assert task["status"] == "blocked"
+    # Should not call create_issue again
+    assert mock_github.create_issue.call_count == 1
+
+
 def test_record_task_failure_rule2(sample_tasks):
     worker = AutomationWorker(tasks_file=sample_tasks)
     task = worker.tasks[0]
