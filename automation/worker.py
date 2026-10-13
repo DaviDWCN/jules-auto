@@ -218,7 +218,7 @@ class GitHubClient:
                             error_details = f"...(truncated)...\n{full_error[-900:]}"
                         else:
                             error_details = full_error
-                    break
+                        break
 
             return {"status": "failure", "error_details": error_details}
 
