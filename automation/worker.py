@@ -177,7 +177,30 @@ class GitHubClient:
             return {"status": "pending"}
 
         if any(c in ["failure", "timed_out", "cancelled"] for c in conclusions):
-            return {"status": "failure"}
+            # Extract detailed error traceback from the first failed check run
+            error_details = ""
+            for run in check_runs:
+                if run.get("conclusion") in ["failure", "timed_out", "cancelled"]:
+                    output = run.get("output", {})
+                    title = output.get("title", "")
+                    summary = output.get("summary", "")
+                    text = output.get("text", "")
+
+                    details = []
+                    if title: details.append(f"Title: {title}")
+                    if summary: details.append(f"Summary:\n{summary}")
+                    if text: details.append(f"Text:\n{text}")
+
+                    if details:
+                        full_error = "\n".join(details)
+                        # Retain up to ~1000 characters, prioritizing the end (traceback)
+                        if len(full_error) > 1000:
+                            error_details = f"...(truncated)...\n{full_error[-950:]}"
+                        else:
+                            error_details = full_error
+                    break
+
+            return {"status": "failure", "error_details": error_details}
 
         if all(c in ["success", "neutral", "skipped"] for c in conclusions):
             return {"status": "success"}
@@ -1077,7 +1100,11 @@ class AutomationWorker:
 
         if status_name == "failure":
             print(f"[CI Failed] Task {task['id']} PR #{pr_number} checks failed.")
-            self.record_task_failure(task, task.get("active_session_id"), f"CI checks failed on PR #{pr_number}")
+            error_details = ci_status.get("error_details")
+            reason = f"CI checks failed on PR #{pr_number}"
+            if error_details:
+                reason += f"\nDetailed Error Traceback:\n{error_details}"
+            self.record_task_failure(task, task.get("active_session_id"), reason)
             return
 
         # CI Passed - check review status
@@ -1169,46 +1196,6 @@ class AutomationWorker:
         print(self.generate_improvement_report())
         print("=== Automation Worker Cycle Complete ===")
 
-    def run_polling_loop(self):
-        """
-        Runs the orchestration lifecycle in a spin loop until all active tasks
-        complete or the maximum polling duration is reached.
-        """
-        if not self.config.get("enable_active_polling", True):
-            print("[Polling Loop] Active polling is disabled in config. Running single cycle instead.")
-            return self.run_cycle()
-
-        interval_seconds = self.config.get("poll_interval_seconds", 20)
-        max_minutes = self.config.get("max_poll_minutes", 10)
-        start_time = time.time()
-        max_seconds = max_minutes * 60
-
-        print(f"=== Starting Active Polling Loop (Max {max_minutes}m, Interval {interval_seconds}s) ===")
-
-        while True:
-            # 1. Execute single cycle to reconcile state and advance tasks
-            self.run_cycle()
-
-            # 2. Re-read active statuses after cycle runs (and possibly updates self.tasks)
-            active_statuses = {"in_progress", "waiting_for_ci", "waiting_for_review"}
-            active_count = sum(1 for t in self.tasks if t.get("status") in active_statuses)
-
-            # 3. Check for exit condition: no active tasks remaining
-            if active_count == 0:
-                print("[Polling Loop] No active tasks remaining. Exiting loop.")
-                break
-
-            # 4. Check for exit condition: max polling timeout
-            elapsed = time.time() - start_time
-            if elapsed >= max_seconds:
-                print(f"[Polling Loop] Maximum polling duration of {max_minutes} minutes reached. Exiting loop.")
-                break
-
-            # 5. Wait for the interval duration before checking again
-            print(f"[Polling Loop] Sleeping for {interval_seconds} seconds... (Elapsed: {elapsed:.1f}s / {max_seconds}s)")
-            time.sleep(interval_seconds)
-
-        print("=== Active Polling Loop Complete ===")
 
     def get_self_improvement_metrics(self) -> Dict[str, Any]:
         """
@@ -1260,38 +1247,42 @@ class AutomationWorker:
 
     def run_polling_loop(self):
         """
-        Runs an active polling loop instead of a single cycle.
-        Maintains loop until all active tasks are done/blocked or max_poll_minutes is reached.
+        Runs the orchestration lifecycle in a spin loop until all active tasks
+        complete or the maximum polling duration is reached.
         """
-        enable_polling = self.config.get("enable_active_polling", True)
-        if not enable_polling:
-            print("[Polling] Active polling is disabled in config. Running single cycle instead.")
-            self.run_cycle()
-            return
+        if not self.config.get("enable_active_polling", True):
+            print("[Polling Loop] Active polling is disabled in config. Running single cycle instead.")
+            return self.run_cycle()
 
-        poll_interval = self.config.get("poll_interval_seconds", 20)
-        max_poll_minutes = self.config.get("max_poll_minutes", 10)
+        interval_seconds = self.config.get("poll_interval_seconds", 20)
+        max_minutes = self.config.get("max_poll_minutes", 10)
+        start_time = time.time()
+        max_seconds = max_minutes * 60
 
-        start_time = datetime.now(timezone.utc)
-        print(f"=== Starting Active Polling Loop (Max {max_poll_minutes}m) ===")
+        print(f"=== Starting Active Polling Loop (Max {max_minutes}m, Interval {interval_seconds}s) ===")
 
         while True:
+            # 1. Execute single cycle to reconcile state and advance tasks
             self.run_cycle()
 
+            # 2. Re-read active statuses after cycle runs (and possibly updates self.tasks)
             active_statuses = {"in_progress", "waiting_for_ci", "waiting_for_review"}
-            active_tasks = [t for t in self.tasks if t.get("status") in active_statuses]
+            active_count = sum(1 for t in self.tasks if t.get("status") in active_statuses)
 
-            if not active_tasks:
-                print("[Polling] No active tasks remaining. Exiting polling loop.")
+            # 3. Check for exit condition: no active tasks remaining
+            if active_count == 0:
+                print("[Polling Loop] No active tasks remaining. Exiting loop.")
                 break
 
-            elapsed_minutes = (datetime.now(timezone.utc) - start_time).total_seconds() / 60.0
-            if elapsed_minutes >= max_poll_minutes:
-                print(f"[Polling] Reached maximum polling duration ({max_poll_minutes}m). Exiting polling loop.")
+            # 4. Check for exit condition: max polling timeout
+            elapsed = time.time() - start_time
+            if elapsed >= max_seconds:
+                print(f"[Polling Loop] Maximum polling duration of {max_minutes} minutes reached. Exiting loop.")
                 break
 
-            print(f"[Polling] Waiting {poll_interval} seconds before next cycle (elapsed: {elapsed_minutes:.1f}m)...")
-            time.sleep(poll_interval)
+            # 5. Wait for the interval duration before checking again
+            print(f"[Polling Loop] Sleeping for {interval_seconds} seconds... (Elapsed: {elapsed:.1f}s / {max_seconds}s)")
+            time.sleep(interval_seconds)
 
         print("=== Active Polling Loop Complete ===")
 

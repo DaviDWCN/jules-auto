@@ -703,3 +703,50 @@ def test_active_polling_loop_disabled(sample_tasks):
     with patch.object(worker, "run_cycle") as mock_cycle:
         worker.run_polling_loop()
         assert mock_cycle.call_count == 1
+
+
+def test_ci_failure_traceback_extraction_and_prompt_injection(sample_tasks):
+    worker = AutomationWorker(tasks_file=sample_tasks)
+    task = worker.tasks[0]
+    task["status"] = "waiting_for_ci"
+    task["pr_number"] = 100
+    task["active_session_id"] = "test-session"
+
+    mock_pr = {"head": {"sha": "abcdef"}, "merged": False, "state": "open"}
+    mock_check_runs_response = {
+        "check_runs": [
+            {
+                "status": "completed",
+                "conclusion": "failure",
+                "output": {
+                    "title": "Pytest Failure",
+                    "summary": "1 failed, 2 passed",
+                    "text": "E       AssertionError: assert False\nE       traceback goes here"
+                }
+            }
+        ]
+    }
+
+    with patch.object(worker.github_client, "get_pr", return_value=mock_pr), \
+         patch("requests.get") as mock_get:
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = mock_check_runs_response
+        mock_get.return_value = mock_response
+
+        # This will trigger get_pr_checks which fetches via requests.get
+        worker.check_pr_and_merge_gates(task)
+
+    # 1. Assert traceback was saved to task history
+    assert len(task.get("failure_history", [])) == 1
+    reason = task["failure_history"][0]["reason"]
+    assert "CI checks failed on PR #100" in reason
+    assert "Detailed Error Traceback:" in reason
+    assert "Title: Pytest Failure" in reason
+    assert "AssertionError: assert False" in reason
+
+    # 2. Assert build_task_prompt injects this traceback
+    prompt = worker.build_task_prompt(task)
+    assert "AssertionError: assert False" in prompt
+    assert "traceback goes here" in prompt
