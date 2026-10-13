@@ -750,3 +750,41 @@ def test_ci_failure_traceback_extraction_and_prompt_injection(sample_tasks):
     prompt = worker.build_task_prompt(task)
     assert "AssertionError: assert False" in prompt
     assert "traceback goes here" in prompt
+
+def test_write_github_step_summary(sample_tasks, tmp_path, monkeypatch):
+    worker = AutomationWorker(tasks_file=sample_tasks)
+
+    # Setup some test data
+    worker.tasks[0]["status"] = "done"
+    worker.tasks[0]["pr_url"] = "https://github.com/test/repo/pull/1"
+    worker.tasks[0]["failure_history"] = [{"error": "retry1"}]
+    worker.tasks[1]["status"] = "in_progress"
+
+    # Mock the memory manager
+    worker.memory_manager = MagicMock()
+    worker.memory_manager.memories = [
+        {"task_id": "TASK-1", "lesson": "Lesson 1"},
+        {"task_id": "TASK-2", "lesson": "Lesson 2"}
+    ]
+
+    summary_file = tmp_path / "step_summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_file))
+
+    worker.write_github_step_summary()
+
+    assert summary_file.exists()
+    content = summary_file.read_text(encoding="utf-8")
+
+    # Check headers
+    assert "## 🤖 Jules Automation Worker Summary" in content
+    assert "### 📋 Task Backlog Status" in content
+    assert "### 📊 System Health & Telemetry" in content
+    assert "### 🧠 Recent Lessons Learned" in content
+
+    # Check task status table contents
+    assert "| TASK-1 | First task | ✅ done | [PR Link](https://github.com/test/repo/pull/1) | 1 |" in content
+    assert "| TASK-2 | Second task | 🔄 in_progress | - | 0 |" in content
+
+    # Check memories
+    assert "- **TASK-1**: Lesson 1" in content
+    assert "- **TASK-2**: Lesson 2" in content

@@ -1194,6 +1194,7 @@ class AutomationWorker:
 
         # Step 5 (RSI Item 3): Report Self-Improvement & System Health Telemetry
         print(self.generate_improvement_report())
+        self.write_github_step_summary()
         print("=== Automation Worker Cycle Complete ===")
 
 
@@ -1230,6 +1231,75 @@ class AutomationWorker:
             "memory_bank_lessons_count": memory_count,
             "evolved_guidelines_count": guidelines_count,
         }
+
+
+    def write_github_step_summary(self):
+        """Writes task and system health summary to GitHub Actions step summary if configured."""
+        summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+        if not summary_path:
+            return
+
+        status_emojis = {
+            "done": "✅ done",
+            "in_progress": "🔄 in_progress",
+            "pending": "⏳ pending",
+            "blocked": "⛔ blocked",
+            "waiting_for_ci": "⏳ waiting_for_ci",
+            "waiting_for_review": "⏳ waiting_for_review"
+        }
+
+        # 1. Generate Task Status Table
+        markdown_lines = [
+            "## 🤖 Jules Automation Worker Summary",
+            "",
+            "### 📋 Task Backlog Status",
+            "| Task ID | Title | Status | PR Link | Retries |",
+            "| --- | --- | --- | --- | --- |"
+        ]
+
+        for task in self.tasks:
+            t_id = task.get("id", "-")
+            title = task.get("title", "-")
+            status = task.get("status", "unknown")
+            emoji_status = status_emojis.get(status, f"❓ {status}")
+            pr_url = task.get("pr_url") or "-"
+            if pr_url != "-":
+                pr_url = f"[PR Link]({pr_url})"
+            retries = len(task.get("failure_history", []))
+
+            markdown_lines.append(f"| {t_id} | {title} | {emoji_status} | {pr_url} | {retries} |")
+
+        # 2. Self-Improvement & Telemetry Metrics
+        metrics = self.get_self_improvement_metrics()
+        markdown_lines.extend([
+            "",
+            "### 📊 System Health & Telemetry",
+            f"- **Repository Memory Bank Items**: {metrics.get('memory_bank_lessons_count', 0)}",
+            f"- **Evolved Project Guidelines**: {metrics.get('evolved_guidelines_count', 0)}",
+            f"- **Overall Completion Rate**: {metrics.get('completion_rate_pct', 0.0)}%",
+            f"- **First-Pass Success Rate**: {metrics.get('first_pass_success_pct', 0.0)}%"
+        ])
+
+        # 3. Recent Lessons Learned
+        if self.memory_manager and self.memory_manager.memories:
+            markdown_lines.extend([
+                "",
+                "### 🧠 Recent Lessons Learned"
+            ])
+            # Show up to 5 most recent lessons
+            recent_memories = list(reversed(self.memory_manager.memories))[:5]
+            for mem in recent_memories:
+                task_id = mem.get('task_id', 'Unknown Task')
+                lesson = mem.get('lesson', '')
+                markdown_lines.append(f"- **{task_id}**: {lesson}")
+
+        markdown_lines.append("")
+
+        try:
+            with open(summary_path, "a", encoding="utf-8") as f:
+                f.write("\n".join(markdown_lines) + "\n")
+        except Exception as e:
+            print(f"[Warning] Failed to write GitHub step summary to {summary_path}: {e}")
 
     def generate_improvement_report(self) -> str:
         """Generates formatted diagnostic report of RSI performance."""
