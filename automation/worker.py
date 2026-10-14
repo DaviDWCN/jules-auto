@@ -218,19 +218,19 @@ class GitHubClient:
                     output = run.get("output")
                     if not isinstance(output, dict):
                         output = {}
-                    title = output.get("title") or ""
-                    summary = output.get("summary") or ""
-                    text = output.get("text") or ""
+                    title_str = output.get("title") or ""
+                    summary_str = output.get("summary") or ""
+                    text_str = output.get("text") or ""
 
                     details = []
-                    if title: details.append(f"Title: {title}")
-                    if summary: details.append(f"Summary:\n{summary}")
-                    if text: details.append(f"Text:\n{text}")
+                    if title_str: details.append(f"Title: {title_str}")
+                    if summary_str: details.append(f"Summary:\n{summary_str}")
+                    if text_str: details.append(f"Text:\n{text_str}")
 
                     if details:
                         full_error = "\n".join(details)
-                        # Retain up to ~1000 characters, prioritizing the end (traceback) for prompt injection
-                        if len(full_error) > 1000:
+                        # Retain safe length (500~1000 characters), prioritizing the end (traceback) for prompt injection
+                        if len(full_error) > 950:
                             error_details = f"...(truncated)...\n{full_error[-900:]}"
                         else:
                             error_details = full_error
@@ -939,11 +939,11 @@ class AutomationWorker:
         for ac in task.get("acceptance_criteria", []):
             prompt_lines.append(f"- {ac}")
 
-        # Rule 2: Include failure details if this is a retry attempt
-        failures = task.get("failure_history", [])
-        if failures:
+        # Rule 2: Include failure details (like CI tracebacks) if this is a retry attempt
+        prior_failures = task.get("failure_history", [])
+        if prior_failures:
             prompt_lines.append("\nPrevious Attempt Failures:")
-            for idx, fail in enumerate(failures, 1):
+            for idx, fail in enumerate(prior_failures, 1):
                 prompt_lines.append(
                     f"Attempt {idx} Failed at {fail.get('timestamp')}:\n"
                     f"  Session ID: {fail.get('session_id')}\n"
@@ -1037,12 +1037,12 @@ class AutomationWorker:
     def record_task_failure(self, task: Dict[str, Any], session_id: Optional[str], reason: str):
         """
         Rule 2: Don't retry using failed session. Clear active session pointer,
-        record failure history, and increment attempts.
+        record failure history (including traceback details if any), and increment attempts.
         """
-        failures = task.setdefault("failure_history", [])
-        failures.append({
+        history_list = task.setdefault("failure_history", [])
+        history_list.append({
             "session_id": session_id,
-            "reason": reason,
+            "reason": str(reason),
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
 
@@ -1051,8 +1051,8 @@ class AutomationWorker:
         task["session_started_at"] = None
 
         limit = task.get("max_attempts") or self.config.get("default_max_attempts", 3)
-        if len(failures) < limit:
-            print(f"[Retry Scheduled] Task {task['id']} attempt {len(failures)} failed. Retrying (Max: {limit}).")
+        if len(history_list) < limit:
+            print(f"[Retry Scheduled] Task {task['id']} attempt {len(history_list)} failed. Retrying (Max: {limit}).")
             task["status"] = "pending"
         else:
             print(f"[Task Blocked] Task {task['id']} exceeded max attempts ({limit}).")
@@ -1083,7 +1083,7 @@ class AutomationWorker:
                     "**Failure History & Diagnostics:**",
                     f"Task exceeded max attempts ({limit}). See logs below:"
                 ])
-                for idx, fail in enumerate(failures, 1):
+                for idx, fail in enumerate(history_list, 1):
                     body_parts.append(f"\n--- Attempt {idx} ---")
                     body_parts.append(f"**Session:** {fail.get('session_id')}")
                     body_parts.append(f"**Reason:**\n```\n{fail.get('reason')}\n```")
