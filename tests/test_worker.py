@@ -848,3 +848,37 @@ def test_write_github_step_summary(sample_tasks, tmp_path, monkeypatch):
     # Check memories
     assert "- **TASK-1**: Lesson 1" in content
     assert "- **TASK-2**: Lesson 2" in content
+
+def test_pr_conflict_breaker_closes_dirty_pr_and_retries(sample_tasks, tmp_path):
+    mock_github = MagicMock()
+    # Mock get_pr to return a PR with conflict state
+    mock_github.get_pr.return_value = {
+        "merged": False,
+        "state": "open",
+        "mergeable": False,
+        "mergeable_state": "dirty"
+    }
+    # We shouldn't need to mock close_pr explicitly beyond the auto-mock since we just verify it was called
+
+    worker = AutomationWorker(memory_file=str(tmp_path / "memory.json"), tasks_file=sample_tasks, github_client=mock_github)
+    task = worker.tasks[0]
+    task["pr_number"] = 42
+    task["pr_url"] = "https://github.com/test/repo/pull/42"
+    task["active_session_id"] = "session-123"
+
+    worker.check_pr_and_merge_gates(task)
+
+    # Assert close_pr was called
+    mock_github.close_pr.assert_called_once_with(42)
+
+    # Assert PR info is cleared
+    assert task["pr_number"] is None
+    assert task["pr_url"] is None
+
+    # Assert failure is recorded with specific message
+    assert len(task["failure_history"]) == 1
+    assert "Git merge conflict with main branch" in task["failure_history"][0]["reason"]
+
+    # Assert task is put back in pending for retry
+    assert task["status"] == "pending"
+    assert task["active_session_id"] is None
