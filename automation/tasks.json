@@ -104,11 +104,17 @@
     ],
     "max_attempts": 3,
     "status": "in_progress",
-    "active_session_id": "2856424634455853417",
+    "active_session_id": "11475236237212036327",
     "pr_number": null,
     "pr_url": null,
-    "failure_history": [],
-    "session_started_at": "2026-10-13T03:29:55.885413+00:00"
+    "failure_history": [
+      {
+        "session_id": "2856424634455853417",
+        "reason": "Session timed out after 2032.5 minutes without completion.",
+        "timestamp": "2026-10-14T13:22:27.616863+00:00"
+      }
+    ],
+    "session_started_at": null
   },
   {
     "id": "TASK-OPT-104",
@@ -165,8 +171,8 @@
       "TASK-OPT-105"
     ],
     "max_attempts": 3,
-    "status": "pending",
-    "active_session_id": null,
+    "status": "in_progress",
+    "active_session_id": "10109755882271918368",
     "pr_number": null,
     "pr_url": null,
     "failure_history": []
