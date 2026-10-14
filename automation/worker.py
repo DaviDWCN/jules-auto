@@ -1283,7 +1283,10 @@ class AutomationWorker:
 
         # Step 5 (RSI Item 3): Report Self-Improvement & System Health Telemetry
         print(self.generate_improvement_report())
+
+        # Trigger GitHub Step Summary write
         self.write_github_step_summary()
+
         print("=== Automation Worker Cycle Complete ===")
 
 
@@ -1323,12 +1326,12 @@ class AutomationWorker:
 
 
     def write_github_step_summary(self):
-        """Writes task and system health summary to GitHub Actions step summary if configured."""
-        summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-        if not summary_path:
+        """Automatically generates and writes task and system health summary to GitHub Actions step summary."""
+        target_env_path = os.environ.get("GITHUB_STEP_SUMMARY")
+        if not target_env_path:
             return
 
-        status_emojis = {
+        icon_mapping = {
             "done": "✅ done",
             "in_progress": "🔄 in_progress",
             "pending": "⏳ pending",
@@ -1337,8 +1340,8 @@ class AutomationWorker:
             "waiting_for_review": "⏳ waiting_for_review"
         }
 
-        # 1. Generate Task Status Table
-        markdown_lines = [
+        # Step 1: Render Task Status Board
+        report_content = [
             "## 🤖 Jules Automation Worker Summary",
             "",
             "### 📋 Task Backlog Status",
@@ -1346,49 +1349,49 @@ class AutomationWorker:
             "| --- | --- | --- | --- | --- |"
         ]
 
-        for task in self.tasks:
-            t_id = task.get("id", "-")
-            title = task.get("title", "-")
-            status = task.get("status", "unknown")
-            emoji_status = status_emojis.get(status, f"❓ {status}")
-            pr_url = task.get("pr_url") or "-"
-            if pr_url != "-":
-                pr_url = f"[PR Link]({pr_url})"
-            retries = len(task.get("failure_history", []))
+        for t in self.tasks:
+            task_ident = t.get("id", "-")
+            task_name = t.get("title", "-")
+            current_status = t.get("status", "unknown")
+            mapped_status = icon_mapping.get(current_status, f"❓ {current_status}")
+            pull_url = t.get("pr_url") or "-"
+            if pull_url != "-":
+                pull_url = f"[PR Link]({pull_url})"
+            retry_count = len(t.get("failure_history", []))
 
-            markdown_lines.append(f"| {t_id} | {title} | {emoji_status} | {pr_url} | {retries} |")
+            report_content.append(f"| {task_ident} | {task_name} | {mapped_status} | {pull_url} | {retry_count} |")
 
-        # 2. Self-Improvement & Telemetry Metrics
-        metrics = self.get_self_improvement_metrics()
-        markdown_lines.extend([
+        # Step 2: Append Self-Evolution and Telemetry
+        telemetry_stats = self.get_self_improvement_metrics()
+        report_content.extend([
             "",
             "### 📊 System Health & Telemetry",
-            f"- **Repository Memory Bank Items**: {metrics.get('memory_bank_lessons_count', 0)}",
-            f"- **Evolved Project Guidelines**: {metrics.get('evolved_guidelines_count', 0)}",
-            f"- **Overall Completion Rate**: {metrics.get('completion_rate_pct', 0.0)}%",
-            f"- **First-Pass Success Rate**: {metrics.get('first_pass_success_pct', 0.0)}%"
+            f"- **Repository Memory Bank Items**: {telemetry_stats.get('memory_bank_lessons_count', 0)}",
+            f"- **Evolved Project Guidelines**: {telemetry_stats.get('evolved_guidelines_count', 0)}",
+            f"- **Overall Completion Rate**: {telemetry_stats.get('completion_rate_pct', 0.0)}%",
+            f"- **First-Pass Success Rate**: {telemetry_stats.get('first_pass_success_pct', 0.0)}%"
         ])
 
-        # 3. Recent Lessons Learned
+        # Step 3: Append Essential Lessons Learned
         if self.memory_manager and self.memory_manager.memories:
-            markdown_lines.extend([
+            report_content.extend([
                 "",
                 "### 🧠 Recent Lessons Learned"
             ])
-            # Show up to 5 most recent lessons
-            recent_memories = list(reversed(self.memory_manager.memories))[:5]
-            for mem in recent_memories:
-                task_id = mem.get('task_id', 'Unknown Task')
-                lesson = mem.get('lesson', '')
-                markdown_lines.append(f"- **{task_id}**: {lesson}")
+            # Limit to the top 5 recent memories
+            top_recent_memories = list(reversed(self.memory_manager.memories))[:5]
+            for memory_entry in top_recent_memories:
+                m_task_id = memory_entry.get('task_id', 'Unknown Task')
+                m_lesson = memory_entry.get('lesson', '')
+                report_content.append(f"- **{m_task_id}**: {m_lesson}")
 
-        markdown_lines.append("")
+        report_content.append("")
 
         try:
-            with open(summary_path, "a", encoding="utf-8") as f:
-                f.write("\n".join(markdown_lines) + "\n")
-        except Exception as e:
-            print(f"[Warning] Failed to write GitHub step summary to {summary_path}: {e}")
+            with open(target_env_path, "a", encoding="utf-8") as summary_file:
+                summary_file.write("\n".join(report_content) + "\n")
+        except Exception as error:
+            print(f"[Warning] Failed to write GitHub step summary to {target_env_path}: {error}")
 
     def generate_improvement_report(self) -> str:
         """Generates formatted diagnostic report of RSI performance."""
