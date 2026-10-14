@@ -223,31 +223,31 @@ class GitHubClient:
 
         if any(c in ["failure", "timed_out", "cancelled"] for c in conclusions):
             # Extract detailed error traceback from the first failed check run
-            error_details = ""
+            extracted_traceback = ""
             for run in check_runs:
                 if run.get("conclusion") in ["failure", "timed_out", "cancelled"]:
                     output = run.get("output")
                     if not isinstance(output, dict):
                         output = {}
-                    title_str = output.get("title") or ""
-                    summary_str = output.get("summary") or ""
-                    text_str = output.get("text") or ""
+                    run_title = output.get("title") or ""
+                    run_summary = output.get("summary") or ""
+                    run_text = output.get("text") or ""
 
-                    details = []
-                    if title_str: details.append(f"Title: {title_str}")
-                    if summary_str: details.append(f"Summary:\n{summary_str}")
-                    if text_str: details.append(f"Text:\n{text_str}")
+                    error_parts = []
+                    if run_title: error_parts.append(f"Title: {run_title}")
+                    if run_summary: error_parts.append(f"Summary:\n{run_summary}")
+                    if run_text: error_parts.append(f"Text:\n{run_text}")
 
-                    if details:
-                        full_error = "\n".join(details)
+                    if error_parts:
+                        combined_error_msg = "\n".join(error_parts)
                         # Retain safe length (500~1000 characters), prioritizing the end (traceback) for prompt injection
-                        if len(full_error) > 950:
-                            error_details = f"...(truncated)...\n{full_error[-900:]}"
+                        if len(combined_error_msg) > 950:
+                            extracted_traceback = f"...(truncated)...\n{combined_error_msg[-900:]}"
                         else:
-                            error_details = full_error
+                            extracted_traceback = combined_error_msg
                         break
 
-            return {"status": "failure", "error_details": error_details}
+            return {"status": "failure", "error_details": extracted_traceback}
 
         if all(c in ["success", "neutral", "skipped"] for c in conclusions):
             return {"status": "success"}
@@ -954,11 +954,11 @@ class AutomationWorker:
         prior_failures = task.get("failure_history", [])
         if prior_failures:
             prompt_lines.append("\nPrevious Attempt Failures:")
-            for idx, fail in enumerate(prior_failures, 1):
+            for attempt_idx, failure_record in enumerate(prior_failures, 1):
                 prompt_lines.append(
-                    f"Attempt {idx} Failed at {fail.get('timestamp')}:\n"
-                    f"  Session ID: {fail.get('session_id')}\n"
-                    f"  Error / Reason: {fail.get('reason')}"
+                    f"Attempt {attempt_idx} Failed at {failure_record.get('timestamp')}:\n"
+                    f"  Session ID: {failure_record.get('session_id')}\n"
+                    f"  Error / Reason: {failure_record.get('reason')}"
                 )
             prompt_lines.append("\nPlease address the issues that caused the prior attempts to fail.")
 
@@ -1201,11 +1201,11 @@ class AutomationWorker:
 
         if status_name == "failure":
             print(f"[CI Failed] Task {task['id']} PR #{pr_number} checks failed.")
-            error_details = ci_status.get("error_details")
-            reason = f"CI checks failed on PR #{pr_number}"
-            if error_details:
-                reason += f"\nDetailed Error Traceback:\n{error_details}"
-            self.record_task_failure(task, task.get("active_session_id"), reason)
+            traceback_info = ci_status.get("error_details")
+            failure_reason = f"CI checks failed on PR #{pr_number}"
+            if traceback_info:
+                failure_reason += f"\nDetailed Error Traceback:\n{traceback_info}"
+            self.record_task_failure(task, task.get("active_session_id"), failure_reason)
             return
 
         # CI Passed - check review status
