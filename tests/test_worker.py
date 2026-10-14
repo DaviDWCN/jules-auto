@@ -852,35 +852,72 @@ def test_write_github_step_summary(sample_tasks, tmp_path, monkeypatch):
     assert "- **TASK-2**: Lesson 2" in file_content
 
 def test_pr_conflict_breaker_closes_dirty_pr_and_retries(sample_tasks, tmp_path):
-    mock_github = MagicMock()
+    mocked_github_client = MagicMock()
     # Mock get_pr to return a PR with conflict state
-    mock_github.get_pr.return_value = {
+    conflict_pr_data = {
         "merged": False,
         "state": "open",
         "mergeable": False,
         "mergeable_state": "dirty"
     }
-    # We shouldn't need to mock close_pr explicitly beyond the auto-mock since we just verify it was called
+    mocked_github_client.get_pr.return_value = conflict_pr_data
 
-    worker = AutomationWorker(memory_file=str(tmp_path / "memory.json"), tasks_file=sample_tasks, github_client=mock_github)
-    task = worker.tasks[0]
-    task["pr_number"] = 42
-    task["pr_url"] = "https://github.com/test/repo/pull/42"
-    task["active_session_id"] = "session-123"
+    automation_worker = AutomationWorker(memory_file=str(tmp_path / "memory.json"), tasks_file=sample_tasks, github_client=mocked_github_client)
+    target_task = automation_worker.tasks[0]
+    target_task["pr_number"] = 42
+    target_task["pr_url"] = "https://github.com/test/repo/pull/42"
+    target_task["active_session_id"] = "session-123"
 
-    worker.check_pr_and_merge_gates(task)
+    automation_worker.check_pr_and_merge_gates(target_task)
 
     # Assert close_pr was called
-    mock_github.close_pr.assert_called_once_with(42)
+    mocked_github_client.close_pr.assert_called_once_with(42)
 
     # Assert PR info is cleared
-    assert task["pr_number"] is None
-    assert task["pr_url"] is None
+    assert target_task["pr_number"] is None
+    assert target_task["pr_url"] is None
 
     # Assert failure is recorded with specific message
-    assert len(task["failure_history"]) == 1
-    assert "Git merge conflict with main branch" in task["failure_history"][0]["reason"]
+    failure_history_list = target_task["failure_history"]
+    assert len(failure_history_list) == 1
+    assert "Git merge conflict with main branch" in failure_history_list[0]["reason"]
 
     # Assert task is put back in pending for retry
-    assert task["status"] == "pending"
-    assert task["active_session_id"] is None
+    assert target_task["status"] == "pending"
+    assert target_task["active_session_id"] is None
+
+def test_github_client_get_pr_polling_logic(tmp_path):
+    import requests
+    from automation.worker import GitHubClient
+
+    mocked_responses = [
+        MagicMock(status_code=200, json=lambda: {"id": 1, "state": "open"}), # Attempt 1: missing mergeable
+        MagicMock(status_code=200, json=lambda: {"id": 1, "state": "open", "mergeable": None}), # Attempt 2: mergeable is None
+        MagicMock(status_code=200, json=lambda: {"id": 1, "state": "open", "mergeable": True, "mergeable_state": "clean"}) # Attempt 3: mergeable is ready
+    ]
+
+    client = GitHubClient("token", "repo")
+
+    with patch("requests.get", side_effect=mocked_responses) as mock_get, \
+         patch("time.sleep") as mock_sleep:
+        pr_data = client.get_pr(100)
+
+        assert mock_get.call_count == 3
+        assert mock_sleep.call_count == 2
+        assert pr_data.get("mergeable") is True
+        assert pr_data.get("mergeable_state") == "clean"
+
+def test_github_client_get_pr_polling_max_attempts(tmp_path):
+    import requests
+    from automation.worker import GitHubClient
+
+    mocked_response = MagicMock(status_code=200, json=lambda: {"id": 1, "state": "open", "mergeable": None})
+    client = GitHubClient("token", "repo")
+
+    with patch("requests.get", return_value=mocked_response) as mock_get, \
+         patch("time.sleep") as mock_sleep:
+        pr_data = client.get_pr(101)
+
+        assert mock_get.call_count == 5
+        assert mock_sleep.call_count == 4
+        assert pr_data.get("mergeable") is None

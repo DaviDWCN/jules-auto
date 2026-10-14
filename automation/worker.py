@@ -161,10 +161,21 @@ class GitHubClient:
         if not self.repository or not self.token:
             return None
         url = f"https://api.github.com/repos/{self.repository}/pulls/{pr_number}"
-        response = requests.get(url, headers=self._get_headers(), timeout=30)
-        if response.status_code == 200:
-            return response.json()
-        return None
+
+        pr_data = None
+        for attempt in range(5):
+            response = requests.get(url, headers=self._get_headers(), timeout=30)
+            if response.status_code == 200:
+                pr_data = response.json()
+                if pr_data.get("mergeable") is not None:
+                    break
+            else:
+                return None
+
+            if attempt < 4:
+                time.sleep(2.0)
+
+        return pr_data
 
     def close_pr(self, pr_number: int) -> bool:
         """Closes a Pull Request."""
@@ -1168,13 +1179,16 @@ class AutomationWorker:
             return
 
         # Detect PR conflicts
-        if pr and (pr.get('mergeable') is False or pr.get('mergeable_state') in ['dirty', 'conflicting']):
-            print(f"[PR Conflict] Task {task['id']} PR #{pr_number} has a merge conflict with the main branch.")
-            self.github_client.close_pr(pr_number)
-            task["pr_number"] = None
-            task["pr_url"] = None
-            self.record_task_failure(task, task.get("active_session_id"), 'Git merge conflict with main branch')
-            return
+        if pr:
+            is_unmergeable = pr.get('mergeable') is False
+            has_conflict_state = pr.get('mergeable_state') in ['dirty', 'conflicting']
+            if is_unmergeable or has_conflict_state:
+                print(f"[PR Conflict] Task {task['id']} PR #{pr_number} has a merge conflict with the main branch.")
+                self.github_client.close_pr(pr_number)
+                task["pr_number"] = None
+                task["pr_url"] = None
+                self.record_task_failure(task, task.get("active_session_id"), 'Git merge conflict with main branch')
+                return
 
         # Check CI checks status
         ci_status = self.github_client.get_pr_checks(pr_number)
