@@ -166,6 +166,22 @@ class GitHubClient:
             return response.json()
         return None
 
+    def close_pr(self, pr_number: int) -> bool:
+        """Closes a Pull Request."""
+        if not self.repository or not self.token:
+            return False
+        url = f"https://api.github.com/repos/{self.repository}/pulls/{pr_number}"
+        payload = {"state": "closed"}
+        try:
+            response = requests.patch(url, headers=self._get_headers(), json=payload, timeout=30)
+            if response.status_code == 200:
+                return True
+            else:
+                print(f"[GitHub API Error] Failed to close PR {pr_number}: {response.status_code} {response.text}")
+        except Exception as e:
+            print(f"[GitHub API Error] Exception during close_pr: {e}")
+        return False
+
     def get_pr_checks(self, pr_number: int) -> Dict[str, Any]:
         """
         Evaluates CI check status for a PR.
@@ -1149,6 +1165,15 @@ class AutomationWorker:
 
         if pr and pr.get("state") == "closed" and not pr.get("merged"):
             self.record_task_failure(task, task.get("active_session_id"), f"PR #{pr_number} was closed without merging.")
+            return
+
+        # Detect PR conflicts
+        if pr and (pr.get('mergeable') is False or pr.get('mergeable_state') in ['dirty', 'conflicting']):
+            print(f"[PR Conflict] Task {task['id']} PR #{pr_number} has a merge conflict with the main branch.")
+            self.github_client.close_pr(pr_number)
+            task["pr_number"] = None
+            task["pr_url"] = None
+            self.record_task_failure(task, task.get("active_session_id"), 'Git merge conflict with main branch')
             return
 
         # Check CI checks status
