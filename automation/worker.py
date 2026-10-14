@@ -1298,8 +1298,11 @@ class AutomationWorker:
         # Step 5 (RSI Item 3): Report Self-Improvement & System Health Telemetry
         print(self.generate_improvement_report())
 
-        # Trigger GitHub Step Summary write
-        self.write_github_step_summary()
+        try:
+            # Generate and append Step Summary telemetry to GitHub Actions
+            self.write_github_step_summary()
+        except Exception as summary_err:
+            print(f"[Warning] Error during write_github_step_summary: {summary_err}")
 
         print("=== Automation Worker Cycle Complete ===")
 
@@ -1341,11 +1344,11 @@ class AutomationWorker:
 
     def write_github_step_summary(self):
         """Automatically generates and writes task and system health summary to GitHub Actions step summary."""
-        target_env_path = os.environ.get("GITHUB_STEP_SUMMARY")
-        if not target_env_path:
+        summary_env_path = os.environ.get("GITHUB_STEP_SUMMARY")
+        if not summary_env_path:
             return
 
-        icon_mapping = {
+        status_icons = {
             "done": "✅ done",
             "in_progress": "🔄 in_progress",
             "pending": "⏳ pending",
@@ -1355,7 +1358,7 @@ class AutomationWorker:
         }
 
         # Step 1: Render Task Status Board
-        report_content = [
+        summary_content = [
             "## 🤖 Jules Automation Worker Summary",
             "",
             "### 📋 Task Backlog Status",
@@ -1363,21 +1366,21 @@ class AutomationWorker:
             "| --- | --- | --- | --- | --- |"
         ]
 
-        for t in self.tasks:
-            task_ident = t.get("id", "-")
-            task_name = t.get("title", "-")
-            current_status = t.get("status", "unknown")
-            mapped_status = icon_mapping.get(current_status, f"❓ {current_status}")
-            pull_url = t.get("pr_url") or "-"
+        for task_info in self.tasks:
+            task_ident = task_info.get("id", "-")
+            task_name = task_info.get("title", "-")
+            current_status = task_info.get("status", "unknown")
+            mapped_status = status_icons.get(current_status, f"❓ {current_status}")
+            pull_url = task_info.get("pr_url") or "-"
             if pull_url != "-":
                 pull_url = f"[PR Link]({pull_url})"
-            retry_count = len(t.get("failure_history", []))
+            retry_count = len(task_info.get("failure_history", []))
 
-            report_content.append(f"| {task_ident} | {task_name} | {mapped_status} | {pull_url} | {retry_count} |")
+            summary_content.append(f"| {task_ident} | {task_name} | {mapped_status} | {pull_url} | {retry_count} |")
 
         # Step 2: Append Self-Evolution and Telemetry
         telemetry_stats = self.get_self_improvement_metrics()
-        report_content.extend([
+        summary_content.extend([
             "",
             "### 📊 System Health & Telemetry",
             f"- **Repository Memory Bank Items**: {telemetry_stats.get('memory_bank_lessons_count', 0)}",
@@ -1388,7 +1391,7 @@ class AutomationWorker:
 
         # Step 3: Append Essential Lessons Learned
         if self.memory_manager and self.memory_manager.memories:
-            report_content.extend([
+            summary_content.extend([
                 "",
                 "### 🧠 Recent Lessons Learned"
             ])
@@ -1397,15 +1400,15 @@ class AutomationWorker:
             for memory_entry in top_recent_memories:
                 m_task_id = memory_entry.get('task_id', 'Unknown Task')
                 m_lesson = memory_entry.get('lesson', '')
-                report_content.append(f"- **{m_task_id}**: {m_lesson}")
+                summary_content.append(f"- **{m_task_id}**: {m_lesson}")
 
-        report_content.append("")
+        summary_content.append("")
 
         try:
-            with open(target_env_path, "a", encoding="utf-8") as summary_file:
-                summary_file.write("\n".join(report_content) + "\n")
+            with open(summary_env_path, "a", encoding="utf-8") as summary_file:
+                summary_file.write("\n".join(summary_content) + "\n")
         except Exception as error:
-            print(f"[Warning] Failed to write GitHub step summary to {target_env_path}: {error}")
+            print(f"[Warning] Failed to write GitHub step summary to {summary_env_path}: {error}")
 
     def generate_improvement_report(self) -> str:
         """Generates formatted diagnostic report of RSI performance."""
