@@ -814,42 +814,42 @@ def test_ci_failure_traceback_extraction_and_prompt_injection(sample_tasks, tmp_
     assert "traceback goes here" in prompt
 
 def test_write_github_step_summary(sample_tasks, tmp_path, monkeypatch):
-    worker = AutomationWorker(memory_file=str(tmp_path / "memory.json"), tasks_file=sample_tasks)
+    test_worker = AutomationWorker(memory_file=str(tmp_path / "memory.json"), tasks_file=sample_tasks)
 
-    # Setup some test data
-    worker.tasks[0]["status"] = "done"
-    worker.tasks[0]["pr_url"] = "https://github.com/test/repo/pull/1"
-    worker.tasks[0]["failure_history"] = [{"error": "retry1"}]
-    worker.tasks[1]["status"] = "in_progress"
+    # Setup mock data for tasks
+    test_worker.tasks[0]["status"] = "done"
+    test_worker.tasks[0]["pr_url"] = "https://github.com/test/repo/pull/1"
+    test_worker.tasks[0]["failure_history"] = [{"error": "retry1"}]
+    test_worker.tasks[1]["status"] = "in_progress"
 
-    # Mock the memory manager
-    worker.memory_manager = MagicMock()
-    worker.memory_manager.memories = [
+    # Mock the memory manager to verify memory inclusion
+    test_worker.memory_manager = MagicMock()
+    test_worker.memory_manager.memories = [
         {"task_id": "TASK-1", "lesson": "Lesson 1"},
         {"task_id": "TASK-2", "lesson": "Lesson 2"}
     ]
 
-    summary_file = tmp_path / "step_summary.md"
-    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_file))
+    target_env_file = tmp_path / "step_summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(target_env_file))
 
-    worker.write_github_step_summary()
+    test_worker.write_github_step_summary()
 
-    assert summary_file.exists()
-    content = summary_file.read_text(encoding="utf-8")
+    assert target_env_file.exists()
+    file_content = target_env_file.read_text(encoding="utf-8")
 
-    # Check headers
-    assert "## 🤖 Jules Automation Worker Summary" in content
-    assert "### 📋 Task Backlog Status" in content
-    assert "### 📊 System Health & Telemetry" in content
-    assert "### 🧠 Recent Lessons Learned" in content
+    # Check if necessary headers are present in markdown output
+    assert "## 🤖 Jules Automation Worker Summary" in file_content
+    assert "### 📋 Task Backlog Status" in file_content
+    assert "### 📊 System Health & Telemetry" in file_content
+    assert "### 🧠 Recent Lessons Learned" in file_content
 
-    # Check task status table contents
-    assert "| TASK-1 | First task | ✅ done | [PR Link](https://github.com/test/repo/pull/1) | 1 |" in content
-    assert "| TASK-2 | Second task | 🔄 in_progress | - | 0 |" in content
+    # Check if correct mapped emojis and links are present in table contents
+    assert "| TASK-1 | First task | ✅ done | [PR Link](https://github.com/test/repo/pull/1) | 1 |" in file_content
+    assert "| TASK-2 | Second task | 🔄 in_progress | - | 0 |" in file_content
 
-    # Check memories
-    assert "- **TASK-1**: Lesson 1" in content
-    assert "- **TASK-2**: Lesson 2" in content
+    # Check if essential lessons are printed out
+    assert "- **TASK-1**: Lesson 1" in file_content
+    assert "- **TASK-2**: Lesson 2" in file_content
 
 def test_pr_conflict_breaker_closes_dirty_pr_and_retries(sample_tasks, tmp_path):
     mock_github = MagicMock()
