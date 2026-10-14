@@ -171,11 +171,18 @@
       "TASK-OPT-105"
     ],
     "max_attempts": 3,
-    "status": "in_progress",
-    "active_session_id": "10109755882271918368",
+    "status": "pending",
+    "active_session_id": null,
     "pr_number": null,
     "pr_url": null,
-    "failure_history": []
+    "failure_history": [
+      {
+        "session_id": "10109755882271918368",
+        "reason": "Jules session state reached FAILED",
+        "timestamp": "2026-10-14T16:35:18.153494+00:00"
+      }
+    ],
+    "session_started_at": null
   },
   {
     "id": "TASK-OPT-107",
