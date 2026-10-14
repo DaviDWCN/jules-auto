@@ -751,6 +751,7 @@ def test_ci_failure_traceback_extraction_and_prompt_injection(sample_tasks, tmp_
     task = worker.tasks[0]
     task["status"] = "waiting_for_ci"
     task["pr_number"] = 100
+    # Verify extracting check run details
     task["active_session_id"] = "test-session"
 
     mock_pr = {"head": {"sha": "abcdef"}, "merged": False, "state": "open"}
@@ -798,9 +799,10 @@ def test_ci_failure_traceback_extraction_and_prompt_injection(sample_tasks, tmp_
         # This will trigger get_pr_checks which fetches via requests.get
         worker.check_pr_and_merge_gates(task)
 
-    # 1. Assert traceback was saved to task history
-    assert len(task.get("failure_history", [])) == 1
-    reason = task["failure_history"][0]["reason"]
+    # 1. Verify traceback was accurately saved to task history
+    history = task.get("failure_history", [])
+    assert len(history) == 1
+    reason = history[0]["reason"]
     assert "CI checks failed on PR #100" in reason
     assert "Detailed Error Traceback:" in reason
     assert "Title: Pytest Failure" in reason
