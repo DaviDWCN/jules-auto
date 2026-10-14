@@ -800,13 +800,13 @@ def test_ci_failure_traceback_extraction_and_prompt_injection(sample_tasks, tmp_
         worker.check_pr_and_merge_gates(task)
 
     # 1. Verify traceback was accurately saved to task history
-    history = task.get("failure_history", [])
-    assert len(history) == 1
-    reason = history[0]["reason"]
-    assert "CI checks failed on PR #100" in reason
-    assert "Detailed Error Traceback:" in reason
-    assert "Title: Pytest Failure" in reason
-    assert "AssertionError: assert False" in reason
+    history_list = task.get("failure_history", [])
+    assert len(history_list) == 1
+    recorded_reason = history_list[0]["reason"]
+    assert "CI checks failed on PR #100" in recorded_reason
+    assert "Detailed Error Traceback:" in recorded_reason
+    assert "Title: Pytest Failure" in recorded_reason
+    assert "AssertionError: assert False" in recorded_reason
 
     # 2. Assert build_task_prompt injects this traceback
     prompt = worker.build_task_prompt(task)
