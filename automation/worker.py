@@ -161,8 +161,24 @@ class GitHubClient:
         if not self.repository or not self.token:
             return None
         url = f"https://api.github.com/repos/{self.repository}/pulls/{pr_number}"
-        response = requests.get(url, headers=self._get_headers(), timeout=30)
-        if response.status_code == 200:
+
+        # GitHub computes 'mergeable' asynchronously. It may be null initially.
+        # Poll up to 5 times to get a definitive mergeable state.
+        for i in range(5):
+            response = requests.get(url, headers=self._get_headers(), timeout=30)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("mergeable") is not None:
+                    return data
+                # If mergeable is None, wait and retry unless it's the last iteration
+                if i < 4:
+                    time.sleep(2)
+            else:
+                break
+
+        # Fallback to returning the last response if it didn't resolve to true/false,
+        # or None if the request failed.
+        if 'response' in locals() and response.status_code == 200:
             return response.json()
         return None
 
@@ -1171,6 +1187,8 @@ class AutomationWorker:
         if pr and (pr.get('mergeable') is False or pr.get('mergeable_state') in ['dirty', 'conflicting']):
             print(f"[PR Conflict] Task {task['id']} PR #{pr_number} has a merge conflict with the main branch.")
             self.github_client.close_pr(pr_number)
+
+            # Clear PR tracking and release concurrency locks
             task["pr_number"] = None
             task["pr_url"] = None
             self.record_task_failure(task, task.get("active_session_id"), 'Git merge conflict with main branch')
