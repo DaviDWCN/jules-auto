@@ -882,3 +882,48 @@ def test_pr_conflict_breaker_closes_dirty_pr_and_retries(sample_tasks, tmp_path)
     # Assert task is put back in pending for retry
     assert task["status"] == "pending"
     assert task["active_session_id"] is None
+
+
+@patch("automation.worker.requests.get")
+@patch("automation.worker.time.sleep")
+def test_get_pr_polls_when_mergeable_is_none(mock_sleep, mock_get, sample_tasks, tmp_path):
+    mock_response_none = MagicMock()
+    mock_response_none.status_code = 200
+    mock_response_none.json.return_value = {"mergeable": None, "state": "open"}
+
+    mock_response_valid = MagicMock()
+    mock_response_valid.status_code = 200
+    mock_response_valid.json.return_value = {"mergeable": True, "state": "open"}
+
+    # Mock requests.get to return None twice, then valid
+    mock_get.side_effect = [mock_response_none, mock_response_none, mock_response_valid]
+
+    from automation.worker import GitHubClient
+    client = GitHubClient(token="fake", repository="fake/repo")
+
+    pr = client.get_pr(42)
+
+    assert pr["mergeable"] is True
+    assert mock_get.call_count == 3
+    assert mock_sleep.call_count == 2
+    mock_sleep.assert_called_with(2)
+
+
+@patch("automation.worker.requests.get")
+@patch("automation.worker.time.sleep")
+def test_get_pr_returns_none_when_max_polls_reached(mock_sleep, mock_get, sample_tasks, tmp_path):
+    mock_response_none = MagicMock()
+    mock_response_none.status_code = 200
+    mock_response_none.json.return_value = {"mergeable": None, "state": "open"}
+
+    # Mock requests.get to always return None for mergeable
+    mock_get.side_effect = [mock_response_none] * 5
+
+    from automation.worker import GitHubClient
+    client = GitHubClient(token="fake", repository="fake/repo")
+
+    pr = client.get_pr(42)
+
+    assert pr["mergeable"] is None
+    assert mock_get.call_count == 5
+    assert mock_sleep.call_count == 4
