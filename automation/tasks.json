@@ -144,7 +144,7 @@
       "TASK-OPT-104"
     ],
     "max_attempts": 3,
-    "status": "pending",
+    "status": "done",
     "active_session_id": null,
     "pr_number": null,
     "pr_url": null,
