@@ -25,8 +25,7 @@
 ## 🧪 本地测试与运行
 
 ```bash
-# 安装依赖
-pip install -r automation/requirements.txt
+# 安装开发与测试依赖 (调度器零外部依赖)
 pip install -e .[dev]
 
 # 运行测试套件

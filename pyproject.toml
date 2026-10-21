@@ -8,9 +8,7 @@ version = "0.1.0"
 description = "Production API service with Jules automation"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = [
-    "requests>=2.28.0",
-]
+dependencies = []
 
 [project.optional-dependencies]
 dev = [
