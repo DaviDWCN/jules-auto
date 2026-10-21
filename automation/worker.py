@@ -15,7 +15,50 @@ import subprocess
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 import re
-import requests
+import urllib.request
+import urllib.error
+
+
+# --- HTTP Helper ---
+
+class HttpResponse:
+    """Lightweight HTTP response wrapper replacing external requests library."""
+
+    def __init__(self, status_code: int, text: str):
+        self.status_code = status_code
+        self.text = text
+
+    def json(self) -> Any:
+        return json.loads(self.text) if self.text else {}
+
+    def raise_for_status(self):
+        if 400 <= self.status_code < 600:
+            raise RuntimeError(f"HTTP Error {self.status_code}: {self.text}")
+
+
+def http_request(
+    url: str,
+    method: str = "GET",
+    headers: Optional[Dict[str, str]] = None,
+    json_data: Optional[Dict[str, Any]] = None,
+    timeout: int = 30
+) -> HttpResponse:
+    """Performs HTTP request using Python standard library urllib.request."""
+    req_headers = headers.copy() if headers else {}
+    data = None
+    if json_data is not None:
+        data = json.dumps(json_data).encode("utf-8")
+        if "Content-Type" not in req_headers:
+            req_headers["Content-Type"] = "application/json"
+
+    req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8")
+            return HttpResponse(resp.status, body)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8") if e.fp else ""
+        return HttpResponse(e.code, body)
 
 
 # --- API Clients ---
@@ -37,7 +80,7 @@ class JulesClient:
         """GET /v1alpha/sources to retrieve connected GitHub repositories."""
         url = f"{self.base_url}/v1alpha/sources"
         try:
-            response = requests.get(url, headers=self._get_headers(), timeout=30)
+            response = http_request(url, method="GET", headers=self._get_headers(), timeout=30)
             if response.status_code != 200:
                 print(f"[Warning] Failed to list sources ({response.status_code}): {response.text}")
                 return []
@@ -101,7 +144,7 @@ class JulesClient:
                     }
                 }
 
-        response = requests.post(url, headers=self._get_headers(), json=payload, timeout=30)
+        response = http_request(url, method="POST", headers=self._get_headers(), json_data=payload, timeout=30)
         if response.status_code not in [200, 201]:
             print(f"[Jules API Error] POST {url} returned {response.status_code}: {response.text}")
         response.raise_for_status()
@@ -110,14 +153,14 @@ class JulesClient:
     def get_session(self, session_id: str) -> Dict[str, Any]:
         """GET /v1alpha/sessions/{sessionId} to retrieve session status and outputs."""
         url = f"{self.base_url}/v1alpha/sessions/{session_id}"
-        response = requests.get(url, headers=self._get_headers(), timeout=30)
+        response = http_request(url, method="GET", headers=self._get_headers(), timeout=30)
         response.raise_for_status()
         return response.json()
 
     def list_sessions(self) -> List[Dict[str, Any]]:
         """GET /v1alpha/sessions to retrieve recent sessions for reconciliation."""
         url = f"{self.base_url}/v1alpha/sessions"
-        response = requests.get(url, headers=self._get_headers(), timeout=30)
+        response = http_request(url, method="GET", headers=self._get_headers(), timeout=30)
         response.raise_for_status()
         data = response.json()
         if isinstance(data, list):
@@ -147,7 +190,7 @@ class GitHubClient:
         if labels is not None:
             payload["labels"] = labels
         try:
-            response = requests.post(url, headers=self._get_headers(), json=payload, timeout=30)
+            response = http_request(url, method="POST", headers=self._get_headers(), json_data=payload, timeout=30)
             if response.status_code == 201:
                 return response.json()
             else:
@@ -164,7 +207,7 @@ class GitHubClient:
 
         pr_data = None
         for attempt in range(5):
-            response = requests.get(url, headers=self._get_headers(), timeout=30)
+            response = http_request(url, method="GET", headers=self._get_headers(), timeout=30)
             if response.status_code == 200:
                 pr_data = response.json()
                 if pr_data.get("mergeable") is not None:
@@ -184,7 +227,7 @@ class GitHubClient:
         url = f"https://api.github.com/repos/{self.repository}/pulls/{pr_number}"
         payload = {"state": "closed"}
         try:
-            response = requests.patch(url, headers=self._get_headers(), json=payload, timeout=30)
+            response = http_request(url, method="PATCH", headers=self._get_headers(), json_data=payload, timeout=30)
             if response.status_code == 200:
                 return True
             else:
@@ -207,7 +250,7 @@ class GitHubClient:
             return {"status": "unknown"}
 
         url = f"https://api.github.com/repos/{self.repository}/commits/{head_sha}/check-runs"
-        response = requests.get(url, headers=self._get_headers(), timeout=30)
+        response = http_request(url, method="GET", headers=self._get_headers(), timeout=30)
         if response.status_code != 200:
             return {"status": "unknown"}
 
@@ -263,7 +306,7 @@ class GitHubClient:
             return "approved"  # Default if no repo/token configured in local tests
 
         url = f"https://api.github.com/repos/{self.repository}/pulls/{pr_number}/reviews"
-        response = requests.get(url, headers=self._get_headers(), timeout=30)
+        response = http_request(url, method="GET", headers=self._get_headers(), timeout=30)
         if response.status_code != 200:
             return "approved"
 
@@ -286,10 +329,11 @@ class GitHubClient:
 
         url = f"https://api.github.com/repos/{self.repository}/pulls/{pr_number}/merge"
         try:
-            response = requests.put(
+            response = http_request(
                 url,
+                method="PUT",
                 headers=self._get_headers(),
-                json={"merge_method": merge_method},
+                json_data={"merge_method": merge_method},
                 timeout=30
             )
             if response.status_code in [200, 204]:
@@ -333,10 +377,11 @@ class GitHubClient:
                         }
                     }
                     """
-                    resp = requests.post(
+                    resp = http_request(
                         "https://api.github.com/graphql",
+                        method="POST",
                         headers=self._get_headers(),
-                        json={"query": mutation, "variables": {"prId": node_id}},
+                        json_data={"query": mutation, "variables": {"prId": node_id}},
                         timeout=30
                     )
                     if resp.status_code == 200 and "errors" not in resp.json():

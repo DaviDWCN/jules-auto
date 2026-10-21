@@ -1,7 +1,6 @@
 # Jules Auto 🤖🚀
 
-[![API CI](https://github.com/DaviDWCN/jules-auto/actions/workflows/api-ci.yml/badge.svg)](https://github.com/DaviDWCN/jules-auto/actions/workflows/api-ci.yml)
-[![Jules Continuous Worker](https://github.com/DaviDWCN/jules-auto/actions/workflows/jules-worker.yml/badge.svg)](https://github.com/DaviDWCN/jules-auto/actions/workflows/jules-worker.yml)
+[![Jules Orchestrator & CI](https://github.com/DaviDWCN/jules-auto/actions/workflows/jules-worker.yml/badge.svg)](https://github.com/DaviDWCN/jules-auto/actions/workflows/jules-worker.yml)
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -88,11 +87,10 @@ flowchart TD
 jules-auto/
 ├── .github/
 │   └── workflows/
-│       ├── api-ci.yml             # API 基础 CI：运行 pytest 测试与语法检查
-│       └── jules-worker.yml       # 定时/手动触发 Jules Worker 调度工作流 (零 PAT 配置)
+│       └── jules-worker.yml       # 浓缩单一工作流：同时包含 pytest 单元测试与 Jules Worker 定时调度
 ├── automation/
 │   ├── config.json                # 项目全局配置 (项目名称、技术栈上下文、Auto-merge 开关)
-│   ├── requirements.txt           # 调度器运行依赖 (requests)
+│   ├── requirements.txt           # 零外部依赖 (仅依赖 Python 标准库)
 │   ├── tasks.json                 # 任务待办与执行状态持久化存储
 │   └── worker.py                  # 核心调度器 (JulesClient, GitHubClient, AutomationWorker)
 ├── jules_auto_template/           # 🌟 极简开箱模板目录 (可直接复制到任意新仓库)
@@ -234,8 +232,7 @@ python -m venv .venv
 source .venv/bin/activate  # Linux / macOS
 # .venv\Scripts\activate   # Windows
 
-# 安装项目与测试依赖
-pip install -r automation/requirements.txt
+# 安装开发与测试依赖 (调度器本身零外部依赖)
 pip install -e .[dev]
 ```
 
@@ -265,13 +262,10 @@ python automation/worker.py
 
 项目通过 `.github/workflows/` 下的工作流实现持续集成与自动化无人值守：
 
-1. **`api-ci.yml`**：
-   - 监听 `main` 分支的 Push 和 PR 事件；
-   - 自动运行 `pytest` 保证核心 API 与 Worker 逻辑健康。
-2. **`jules-worker.yml`**：
-   - 每 15 分钟定时执行（Cron: `*/15 * * * *`），支持在 Actions 页面手动触发（`workflow_dispatch`）；
-   - 并发策略采用 `group: jules-worker-orchestration` 并关闭 `cancel-in-progress`，确保状态流转原子性；
-   - 自动执行 `worker.py`，并将变更后的 `automation/tasks.json` 以 `[skip ci]` 形式安全提交回版本库。
+1. **`jules-worker.yml` (浓缩单一工作流)**：
+   - 监听 `main` 分支的 Push、PR、15 分钟定时调度 (Cron: `*/15 * * * *`) 及手动触发 (`workflow_dispatch`)；
+   - **零外部依赖**：由于 Worker 完全基于 Python 标准库，GitHub Actions 执行无需 pip 安装调度器依赖；
+   - 自动运行 `pytest` 单元测试，并在主分支事件与定时触发时自动调度 `worker.py`，完成 PR 生成、合并门禁校验与状态回写 (`tasks.json`)。
 
 ---
 

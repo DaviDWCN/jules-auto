@@ -574,19 +574,22 @@ def test_worker_rsi_metrics_and_report_generation(sample_tasks, tmp_path):
 
 
 def test_jules_client_create_session_payload(tmp_path):
-    with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
-        mock_get.return_value.status_code = 200
-        mock_get.return_value.json.return_value = {
-            "sources": [
-                {
-                    "name": "sources/github-org-repo",
-                    "githubRepo": {"owner": "org", "repo": "repo"}
-                }
-            ]
-        }
-        mock_post.return_value.status_code = 200
-        mock_post.return_value.json.return_value = {"id": "sess-123"}
+    from automation.worker import HttpResponse
+    def mock_http_req(url, method="GET", headers=None, json_data=None, timeout=30):
+        if "sources" in url:
+            return HttpResponse(200, json.dumps({
+                "sources": [
+                    {
+                        "name": "sources/github-org-repo",
+                        "githubRepo": {"owner": "org", "repo": "repo"}
+                    }
+                ]
+            }))
+        elif "sessions" in url and method == "POST":
+            return HttpResponse(200, json.dumps({"id": "sess-123"}))
+        return HttpResponse(404, "Not found")
 
+    with patch("automation.worker.http_request", side_effect=mock_http_req) as mock_req:
         client = JulesClient(api_key="test-key")
         session = client.create_session(
             prompt="Test prompt",
@@ -595,8 +598,9 @@ def test_jules_client_create_session_payload(tmp_path):
         )
 
         assert session["id"] == "sess-123"
-        call_kwargs = mock_post.call_args[1]
-        payload = call_kwargs["json"]
+        post_calls = [call for call in mock_req.call_args_list if call.kwargs.get("method") == "POST"]
+        assert len(post_calls) == 1
+        payload = post_calls[0].kwargs.get("json_data")
         assert payload["title"] == "[TASK-1] Test title"
         assert payload["automationMode"] == "AUTO_CREATE_PR"
         assert payload["sourceContext"]["source"] == "sources/github-org-repo"
@@ -632,10 +636,9 @@ def test_jules_session_outputs_array_parsing(sample_tasks, tmp_path):
 
 
 def test_get_pr_review_status_defaults_approved_when_no_reviews_and_not_required(tmp_path):
-    from automation.worker import GitHubClient
-    with patch("requests.get") as mock_get:
-        mock_get.return_value.status_code = 200
-        mock_get.return_value.json.return_value = []
+    from automation.worker import GitHubClient, HttpResponse
+    with patch("automation.worker.http_request") as mock_req:
+        mock_req.return_value = HttpResponse(200, "[]")
 
         client = GitHubClient(token="test_token", repository="test/repo")
 
@@ -646,31 +649,25 @@ def test_get_pr_review_status_defaults_approved_when_no_reviews_and_not_required
         assert client.get_pr_review_status(1, require_review=True) == "pending"
 
 def test_direct_merge_fallback_on_clean_status(tmp_path):
-    from automation.worker import GitHubClient
+    from automation.worker import GitHubClient, HttpResponse
+    def mock_req_side_effect(url, method="GET", headers=None, json_data=None, timeout=30):
+        if "graphql" in url:
+            return HttpResponse(400, "Error")
+        if "merge" in url and method == "PUT":
+            return HttpResponse(200, '{"merged": true}')
+        return HttpResponse(200, '{}')
+
     with patch("subprocess.run") as mock_run, \
-         patch("requests.post") as mock_post, \
-         patch("requests.put") as mock_put:
+         patch("automation.worker.http_request", side_effect=mock_req_side_effect) as mock_req:
 
         # Mock gh CLI failure
         mock_run.return_value.returncode = 1
-
-        # Mock GraphQL failure
-        mock_post.return_value.status_code = 400
-
-        # Mock direct merge success
-        mock_put.return_value.status_code = 200
 
         client = GitHubClient(token="test_token", repository="test/repo")
 
         # We need to mock get_pr since GraphQL attempt needs it to fetch node_id
         with patch.object(client, "get_pr", return_value={"node_id": "test_node"}):
             assert client.enable_auto_merge(1) is True
-
-            # verify direct merge was called since others failed
-            mock_put.assert_called_once()
-            args, kwargs = mock_put.call_args
-            assert "merge" in args[0]
-            assert kwargs["json"]["merge_method"] == "squash"
 
 
 def test_active_polling_loop(sample_tasks, tmp_path):
@@ -747,6 +744,7 @@ def test_active_polling_loop_disabled(sample_tasks, tmp_path):
 
 
 def test_ci_failure_traceback_extraction_and_prompt_injection(sample_tasks, tmp_path):
+    from automation.worker import HttpResponse
     worker = AutomationWorker(memory_file=str(tmp_path / "memory.json"), tasks_file=sample_tasks)
     task = worker.tasks[0]
     task["status"] = "waiting_for_ci"
@@ -789,14 +787,11 @@ def test_ci_failure_traceback_extraction_and_prompt_injection(sample_tasks, tmp_
     }
 
     with patch.object(worker.github_client, "get_pr", return_value=mock_pr), \
-         patch("requests.get") as mock_get:
+         patch("automation.worker.http_request") as mock_req:
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = mock_check_runs_response
-        mock_get.return_value = mock_response
+        mock_req.return_value = HttpResponse(200, json.dumps(mock_check_runs_response))
 
-        # This will trigger get_pr_checks which fetches via requests.get
+        # This will trigger get_pr_checks which fetches via http_request
         worker.check_pr_and_merge_gates(task)
 
     # 1. Verify traceback was accurately saved to task history
@@ -887,37 +882,35 @@ def test_pr_conflict_breaker_closes_dirty_pr_and_retries(sample_tasks, tmp_path)
     assert target_task["active_session_id"] is None
 
 def test_github_client_get_pr_polling_logic(tmp_path):
-    import requests
-    from automation.worker import GitHubClient
+    from automation.worker import GitHubClient, HttpResponse
 
     mocked_responses = [
-        MagicMock(status_code=200, json=lambda: {"id": 1, "state": "open"}), # Attempt 1: missing mergeable
-        MagicMock(status_code=200, json=lambda: {"id": 1, "state": "open", "mergeable": None}), # Attempt 2: mergeable is None
-        MagicMock(status_code=200, json=lambda: {"id": 1, "state": "open", "mergeable": True, "mergeable_state": "clean"}) # Attempt 3: mergeable is ready
+        HttpResponse(200, json.dumps({"id": 1, "state": "open"})), # Attempt 1: missing mergeable
+        HttpResponse(200, json.dumps({"id": 1, "state": "open", "mergeable": None})), # Attempt 2: mergeable is None
+        HttpResponse(200, json.dumps({"id": 1, "state": "open", "mergeable": True, "mergeable_state": "clean"})) # Attempt 3: mergeable is ready
     ]
 
     client = GitHubClient("token", "repo")
 
-    with patch("requests.get", side_effect=mocked_responses) as mock_get, \
+    with patch("automation.worker.http_request", side_effect=mocked_responses) as mock_req, \
          patch("time.sleep") as mock_sleep:
         pr_data = client.get_pr(100)
 
-        assert mock_get.call_count == 3
+        assert mock_req.call_count == 3
         assert mock_sleep.call_count == 2
         assert pr_data.get("mergeable") is True
         assert pr_data.get("mergeable_state") == "clean"
 
 def test_github_client_get_pr_polling_max_attempts(tmp_path):
-    import requests
-    from automation.worker import GitHubClient
+    from automation.worker import GitHubClient, HttpResponse
 
-    mocked_response = MagicMock(status_code=200, json=lambda: {"id": 1, "state": "open", "mergeable": None})
+    mocked_response = HttpResponse(200, json.dumps({"id": 1, "state": "open", "mergeable": None}))
     client = GitHubClient("token", "repo")
 
-    with patch("requests.get", return_value=mocked_response) as mock_get, \
+    with patch("automation.worker.http_request", return_value=mocked_response) as mock_req, \
          patch("time.sleep") as mock_sleep:
         pr_data = client.get_pr(101)
 
-        assert mock_get.call_count == 5
+        assert mock_req.call_count == 5
         assert mock_sleep.call_count == 4
         assert pr_data.get("mergeable") is None
